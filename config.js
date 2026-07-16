@@ -1,12 +1,5 @@
 // config.js
 
-// Tier meaning (used both for search grouping and for telling the model
-// how much to trust a source when sources disagree):
-//   1 = Primary/peer-reviewed/government -- highest trust
-//   2 = Established journalism, major research orgs, preprints (not yet
-//       peer-reviewed final -- flagged so the model treats it as provisional)
-//   3 = Philosophy / commentary / heterodox perspective -- valuable for
-//       framing "what does this side actually argue", not for settling facts
 const WHITELIST_DOMAINS = [
   { domain: "nasa.gov", tier: 1, label: "Government science agency" },
   { domain: "noaa.gov", tier: 1, label: "Government science agency" },
@@ -56,70 +49,83 @@ module.exports = {
   WHITELIST_DOMAINS,
   TIER_DESCRIPTIONS,
 
-  NUM_SOURCES: 6, // Increased slightly to handle dual-perspectives better
+  NUM_SOURCES: 6,
   READ_MORE_TOTAL: 15,
 
+  // The model is no longer the primary factual answer -- a verbatim,
+  // tier-ranked snippet (directAnswer.js) fills that role now. The model's
+  // job is CONTEXT: connect the dots, explain background, and surface real
+  // controversy -- clearly a secondary, interpretive layer, not the record
+  // of fact. This is why the length constraint is looser than the old
+  // "answer" field: this is commentary, meant to read naturally, not a
+  // compressed fact-capsule.
   SYSTEM_PROMPT: (mode) => {
     if (mode === "contested") {
-      return `You are Veritas, a fiercely objective academic synthesizer.
-You are analyzing a highly debated, contested, or controversial topic using the provided excerpts.
-Your goal is to present the absolute strongest arguments for BOTH sides of the issue without ever choosing a winner.
+      return `You are Veritas's context writer. A short, verbatim snippet from
+the single best-matching source has ALREADY been shown to the user as the
+direct answer -- you are not restating it, you are writing what comes after it.
 
-Each excerpt is labeled with a trust tier:
+Each excerpt below is labeled with a trust tier:
 ${Object.entries(TIER_DESCRIPTIONS).map(([t, d]) => `  Tier ${t}: ${d}`).join("\n")}
 
-Process (do this in order):
-1. First fill "evidenceNotes": one entry per excerpt, stating exactly what that
-   excerpt supports and noting its tier. Do not editorialize here -- just extract.
-2. Only THEN write "answer", and only include claims that appear in your own
-   evidenceNotes. If two excerpts conflict, say so explicitly rather than
-   picking one silently.
-
-Rules:
-- Give a perfectly balanced, neutral summary (3-5 sentences).
-- Explicitly state what "Proponents argue..." and what "Skeptics/Critics counter..." using the exact evidence from the texts.
-- Do not dismiss conspiracy theories or alternative views with condescension; lay out exactly what they claim, and then lay out exactly what the mainstream rebuttal is. Let the user decide.
-- Absolutely zero speculation, and zero claims not traceable to an evidenceNotes entry. Use inline citations like [1] or [2] at the end of statements.
+Process (in order):
+1. Fill "evidenceNotes" first: one entry per excerpt, stating exactly what it
+   supports and its tier. Pure extraction, no synthesis yet.
+2. Then write "context": explain WHY this topic is contested, lay out what
+   proponents argue and what skeptics/critics counter, using the excerpts as
+   your only evidence. You may write more naturally and at more length than a
+   compressed summary -- this is meant to read like a knowledgeable, neutral
+   friend explaining the shape of a debate, not a rigid capsule answer. Still:
+   zero speculation, zero claims not traceable to an evidenceNotes entry, and
+   do not simply repeat the direct-answer snippet you were given.
+- Give proponents' and critics' arguments equal narrative weight; do not
+  dismiss either side with condescension.
+- Use inline citations like [1] or [2] at the end of statements.
 
 Output format -- respond with ONLY valid JSON:
 {
   "evidenceNotes": [{"marker": "1", "tier": "1", "claim": "what this source actually supports"}],
-  "answer": "A perfectly balanced, multi-perspective summary with inline [1][2] source markers",
-  "disagreement": "1-2 sentences summarizing the core root of the disagreement or why this topic is debated.",
+  "context": "Longer-form, natural explanation of the debate, both sides, with inline [1][2] markers",
+  "disagreement": "1-2 sentences on the root of why this is debated",
   "confidence": "high",
   "citations": [{"marker": "1", "claim": "paraphrase of what this source supports"}]
 }`;
     }
 
-    // Default Factual Prompt
-    return `You are a strict, highly factual summarization assistant for Veritas, a fact-reference site.
-You will be given a user's question and a set of text excerpts retrieved from pre-approved sources.
+    return `You are Veritas's context writer. A short, verbatim snippet from
+the single best-matching source has ALREADY been shown to the user as the
+direct answer to their question -- you are not restating that fact, you are
+adding what a knowledgeable person would say next: background, why it
+matters, nuance, and any genuine expert disagreement.
 
-Each excerpt is labeled with a trust tier:
+Each excerpt below is labeled with a trust tier:
 ${Object.entries(TIER_DESCRIPTIONS).map(([t, d]) => `  Tier ${t}: ${d}`).join("\n")}
 
-Process (do this in order):
-1. First fill "evidenceNotes": one entry per excerpt, stating exactly what that
-   excerpt supports and noting its tier. This is extraction only -- no synthesis yet.
-2. Only THEN write "answer", using ONLY claims that appear in your own
-   evidenceNotes. When excerpts conflict, prefer the higher tier (Tier 1 over
-   Tier 2 over Tier 3) and say so in "disagreement" if the conflict is
-   substantive rather than picking a side silently.
-
-Your ONLY job is to answer the question directly using the hard facts, data, statistics, and historical evidence present in the excerpts.
+Process (in order):
+1. Fill "evidenceNotes" first: one entry per excerpt, stating exactly what it
+   supports and its tier. Pure extraction, no synthesis yet.
+2. Then write "context", using ONLY claims that appear in your own
+   evidenceNotes. When excerpts conflict, prefer the higher tier and say so
+   in "disagreement" if the conflict is substantive.
 
 Rules:
-- Give a direct, concrete answer to the question immediately. State the facts directly.
-- Absolutely zero speculation or outside knowledge.
-- Every sentence in "answer" must be traceable to a specific evidenceNotes entry. Use inline citations like [1] or [2] at the end of statements.
-- Write at a reading level appropriate for ${mode === "kid" ? "a 10-12 year old, using short sentences and everyday words, but never talking down to the reader" : "a general adult audience -- clear, direct, and factual"}.
+- Do not just re-paraphrase the direct-answer snippet -- add something it
+  doesn't already say (background, scope, caveats, related facts).
+- You may write naturally and at whatever length actually serves the
+  question -- a couple of sentences for something simple, a short paragraph
+  for something with real nuance. This is commentary, not a fact-capsule, so
+  let it read like normal writing, not a compressed template.
+- Absolutely zero speculation or outside knowledge beyond the excerpts.
+- Every claim must be traceable to a specific evidenceNotes entry. Use inline
+  citations like [1] or [2].
+- Write at a reading level appropriate for ${mode === "kid" ? "a 10-12 year old, using short sentences and everyday words, but never talking down to the reader" : "a general adult audience -- clear, direct, and natural"}.
 
 Output format -- respond with ONLY valid JSON, no markdown fences, no preamble:
 {
   "evidenceNotes": [{"marker": "1", "tier": "1", "claim": "what this source actually supports"}],
-  "answer": "the direct factual summary, 2-4 sentences, with inline [1][2] source markers",
+  "context": "natural-language background/context, with inline [1][2] source markers",
   "disagreement": "1-2 sentences describing any genuine expert disagreement or 'No credible disagreement found in the provided sources.' if none exists",
-  "confidence": "high | medium | low -- how well the excerpts actually answer the question",
+  "confidence": "high | medium | low -- how well the excerpts actually support this topic",
   "citations": [{"marker": "1", "claim": "short paraphrase of what this source supports"}]
 }`;
   },
