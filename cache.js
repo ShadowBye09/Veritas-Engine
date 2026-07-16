@@ -22,6 +22,19 @@ db.exec(`
   )
 `);
 
+// Remembers how "volatile" a given question's topic is, so we don't have to
+// re-classify it every time it's asked. This is what lets the shared cache
+// use a longer TTL for stable facts and a short one for fast-changing topics
+// instead of one flat TTL for everything.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS topic_volatility (
+    question TEXT PRIMARY KEY,
+    tier TEXT NOT NULL,
+    ttl_hours INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
 /**
  * Retrieve cached results if they are newer than the specified TTL (Time-To-Live).
  * @param {string} question 
@@ -69,7 +82,59 @@ function setCachedResult(question, mode, result) {
   insert.run(normalizedQuestion, mode, jsonString);
 }
 
+/**
+ * Look up a previously-computed volatility classification for this question.
+ * @param {string} question
+ * @returns {{tier: string, ttlHours: number}|null}
+ */
+function getVolatility(question) {
+  const normalizedQuestion = question.toLowerCase().trim();
+  const row = db
+    .prepare(`SELECT tier, ttl_hours FROM topic_volatility WHERE question = ?`)
+    .get(normalizedQuestion);
+  return row ? { tier: row.tier, ttlHours: row.ttl_hours } : null;
+}
+
+/**
+ * Store a volatility classification so future requests for the same
+ * question skip re-classification. Volatility itself doesn't need a TTL --
+ * "how fast does this type of topic change" is a stable judgment about the
+ * question, not about the answer.
+ * @param {string} question
+ * @param {string} tier - "FAST" | "MEDIUM" | "SLOW"
+ * @param {number} ttlHours
+ */
+function setVolatility(question, tier, ttlHours) {
+  const normalizedQuestion = question.toLowerCase().trim();
+  db.prepare(`
+    INSERT INTO topic_volatility (question, tier, ttl_hours)
+    VALUES (?, ?, ?)
+    ON CONFLICT(question) DO UPDATE SET
+      tier = excluded.tier,
+      ttl_hours = excluded.ttl_hours
+  `).run(normalizedQuestion, tier, ttlHours);
+}
+
+/**
+ * Force-expire a specific cached question/mode immediately, regardless of
+ * TTL. Manual safety valve for the shared cache -- use when a human notices
+ * a cached answer is wrong or stale.
+ * @param {string} question
+ * @param {string} mode
+ * @returns {boolean} true if a row was deleted
+ */
+function invalidateCachedResult(question, mode) {
+  const normalizedQuestion = question.toLowerCase().trim();
+  const result = db
+    .prepare(`DELETE FROM query_cache WHERE question = ? AND mode = ?`)
+    .run(normalizedQuestion, mode);
+  return result.changes > 0;
+}
+
 module.exports = {
   getCachedResult,
-  setCachedResult
+  setCachedResult,
+  getVolatility,
+  setVolatility,
+  invalidateCachedResult,
 };
