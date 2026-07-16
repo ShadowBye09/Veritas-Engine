@@ -36,7 +36,6 @@
     </button>
   </div>
 
-  <!-- New togglable switch container for De-Biasing -->
   <div class="debias-container">
     <label class="debias-switch-label">
       <div class="switch">
@@ -66,9 +65,19 @@
     <div class="badge-row">
       <span class="badge badge-ai ai-only">AI summary, verified sources only</span>
       <span class="badge badge-reviewed human-only" style="display:none;">reviewed by our team</span>
+      <span class="badge badge-fresh freshness-badge ai-only" style="display:none;"></span>
+      <span class="badge badge-volatility volatility-badge ai-only" style="display:none;"></span>
     </div>
+
     <h2 class="question-title"></h2>
-    
+
+    <div class="byline human-only" style="display:none;"></div>
+
+    <div class="strata-section ai-only" style="display:none;">
+      <div class="strata-bar"></div>
+      <div class="strata-caption"></div>
+    </div>
+
     <div class="strategy-banner" style="display:none;">
       <div class="strategy-banner-header">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
@@ -86,6 +95,12 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
       <span>this answer wasn't written by a person — it's a summary generated from the sources below</span>
     </div>
+
+    <button class="evidence-trail-btn ai-only" style="display:none;">
+      <span>see how we checked this</span>
+      <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="evidence-trail-list"></div>
 
     <div class="sources-label">sources used for this summary</div>
     <div class="sources-list"></div>
