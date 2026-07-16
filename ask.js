@@ -3,6 +3,7 @@
 require("dotenv").config();
 const { retrieveSources } = require("./retrieve");
 const { summarize } = require("./summarize");
+const { selectDirectAnswer } = require("./directAnswer");
 const { findHumanAnswer } = require("./humanAnswers");
 
 async function main() {
@@ -58,14 +59,24 @@ async function main() {
   console.log(`Found ${aiSources.length} AI source(s), ${moreSources.length} extra "read more" link(s):`);
   aiSources.forEach((s) => console.log(`  [${s.index}] ${s.title} -- ${s.link}`));
 
-  console.log("\nSummarizing with grounding constraint...\n");
-  
+  console.log("\nSelecting direct-answer snippet...");
+  const directAnswer = await selectDirectAnswer(question, aiSources);
+
+  console.log("\nWriting context with grounding constraint...\n");
+
   // Use contested mode instructions if the query partition was triggered
   const activeLLMMode = (searchStrategy && searchStrategy.isContested) ? "contested" : mode;
-  const result = await summarize(question, aiSources, activeLLMMode);
+  const result = await summarize(question, aiSources, activeLLMMode, directAnswer);
 
-  console.log("ANSWER:");
-  console.log(result.answer);
+  console.log("DIRECT ANSWER:");
+  if (directAnswer) {
+    console.log(`"${directAnswer.text}"`);
+    console.log(`-- [${directAnswer.sourceIndex}] ${directAnswer.title} (tier ${directAnswer.tier}, match ${directAnswer.matchScore})`);
+  } else {
+    console.log("(no confident snippet match found)");
+  }
+  console.log("\nCONTEXT:");
+  console.log(result.context);
   console.log("\nDISAGREEMENT:");
   console.log(result.disagreement);
   console.log("\nCONFIDENCE:", result.confidence);
