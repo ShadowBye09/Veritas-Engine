@@ -12,6 +12,24 @@ const modeToggle = document.getElementById("modeToggle");
 const themeToggle = document.getElementById("themeToggle");
 const debiasToggle = document.getElementById("debiasToggle");
 
+// Tier metadata for rendering -- mirrors the trust tiers defined in the
+// backend's config.js (1 = bedrock/most trusted ... 3 = surface/commentary).
+const TIER_META = {
+  1: { key: "tier1", label: "Bedrock" },
+  2: { key: "tier2", label: "Sediment" },
+  3: { key: "tier3", label: "Surface" },
+};
+
+function tierInfo(tier) {
+  return TIER_META[tier] || { key: "unranked", label: "Unranked" };
+}
+
+const VOLATILITY_LABELS = {
+  FAST: "fast-moving topic",
+  MEDIUM: "stable topic",
+  SLOW: "rarely changes",
+};
+
 // --- Persistent kid/adult mode ---
 let currentMode = localStorage.getItem("veritas_mode") || "kid";
 
@@ -70,10 +88,10 @@ async function runSearch() {
     const res = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        question, 
+      body: JSON.stringify({
+        question,
         mode: currentMode,
-        debias: currentDebias // Forward toggle switch option
+        debias: currentDebias
       }),
     });
 
@@ -135,6 +153,63 @@ function showResult(question, data) {
 
   node.querySelector(".question-title").textContent = question;
 
+  // --- Freshness + volatility badges (AI tier only) ---
+  const freshnessBadge = node.querySelector(".freshness-badge");
+  const volatilityBadge = node.querySelector(".volatility-badge");
+  if (!isHuman) {
+    freshnessBadge.style.display = "";
+    freshnessBadge.textContent = data.cached ? "from shared cache" : "freshly checked";
+
+    if (data.volatility) {
+      volatilityBadge.style.display = "";
+      volatilityBadge.textContent = VOLATILITY_LABELS[data.volatility] || data.volatility.toLowerCase();
+    }
+  }
+
+  // --- Byline (human tier) ---
+  const byline = node.querySelector(".byline");
+  if (isHuman) {
+    const parts = [];
+    if (data.author) parts.push(`written by ${data.author}`);
+    if (data.reviewedBy) parts.push(`reviewed by ${data.reviewedBy}`);
+    if (data.lastUpdated) parts.push(`updated ${data.lastUpdated}`);
+    if (parts.length) {
+      byline.style.display = "";
+      byline.textContent = parts.join(" · ");
+    }
+  }
+
+  // --- Evidence strata bar (AI tier only) ---
+  const strataSection = node.querySelector(".strata-section");
+  if (!isHuman && (data.sources || []).length > 0) {
+    const counts = { tier1: 0, tier2: 0, tier3: 0, unranked: 0 };
+    data.sources.forEach((s) => {
+      const info = tierInfo(s.tier);
+      counts[info.key] += 1;
+    });
+
+    const total = data.sources.length;
+    const bar = node.querySelector(".strata-bar");
+    const caption = node.querySelector(".strata-caption");
+
+    ["tier1", "tier2", "tier3", "unranked"].forEach((key) => {
+      if (counts[key] === 0) return;
+      const seg = document.createElement("div");
+      seg.className = `strata-segment ${key}`;
+      seg.style.width = `${(counts[key] / total) * 100}%`;
+      bar.appendChild(seg);
+
+      const label = key === "unranked" ? "unranked" : tierInfo(Object.keys(TIER_META).find(k => TIER_META[k].key === key)).label.toLowerCase();
+      const item = document.createElement("span");
+      item.className = "strata-caption-item";
+      item.innerHTML = `<span class="strata-dot ${key}"></span>${counts[key]} ${label}`;
+      caption.appendChild(item);
+    });
+
+    strataSection.style.display = "";
+  }
+
+  // --- Strategy banner ---
   const strategyBanner = node.querySelector(".strategy-banner");
   if (data.searchStrategy && data.searchStrategy.isContested) {
     strategyBanner.style.display = "block";
@@ -149,6 +224,30 @@ function showResult(question, data) {
     data.disagreement || "No disagreement information available.";
   node.querySelector(".confidence-value").textContent = data.confidence || "unknown";
 
+  // --- Evidence trail (the model's own extraction scratchpad, made visible) ---
+  const evidenceBtn = node.querySelector(".evidence-trail-btn");
+  const evidenceList = node.querySelector(".evidence-trail-list");
+  if (!isHuman && (data.evidenceNotes || []).length > 0) {
+    evidenceBtn.style.display = "";
+    data.evidenceNotes.forEach((note) => {
+      const source = (data.sources || []).find((s) => String(s.index) === String(note.marker));
+      const tier = source ? source.tier : null;
+      const info = tierInfo(tier);
+
+      const item = document.createElement("div");
+      item.className = `evidence-note ${info.key}`;
+      item.innerHTML = `<span class="evidence-note-marker">[${note.marker}]</span>${note.claim || ""}`;
+      evidenceList.appendChild(item);
+    });
+
+    evidenceBtn.addEventListener("click", () => {
+      const opening = !evidenceBtn.classList.contains("open");
+      evidenceBtn.classList.toggle("open", opening);
+      evidenceList.classList.toggle("open", opening);
+    });
+  }
+
+  // --- Sources ---
   const sourcesList = node.querySelector(".sources-list");
   (data.sources || []).forEach((s) => {
     sourcesList.appendChild(buildSourceLink(s));
@@ -256,16 +355,28 @@ function showResult(question, data) {
 }
 
 function buildSourceLink(s) {
+  const info = tierInfo(s.tier);
+
   const a = document.createElement("a");
-  a.className = "source-item";
+  a.className = `source-item ${info.key}`;
   a.href = s.link;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
-  
+
+  const topRow = document.createElement("div");
+  topRow.className = "source-top-row";
+
+  const badge = document.createElement("span");
+  badge.className = `source-tier-badge ${info.key}`;
+  badge.textContent = info.label;
+  topRow.appendChild(badge);
+
   const spanTitle = document.createElement("span");
   spanTitle.className = "source-title";
   spanTitle.textContent = s.title || s.link;
-  a.appendChild(spanTitle);
+  topRow.appendChild(spanTitle);
+
+  a.appendChild(topRow);
 
   const spanUrl = document.createElement("span");
   spanUrl.className = "source-url";
