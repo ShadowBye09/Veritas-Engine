@@ -188,6 +188,11 @@ async function searchWhitelist(query, resultsPerGroup = 10) {
 
 /**
  * Fetch a URL and extract clean article text.
+ * @returns {{text: string, extracted: boolean}} extracted=true means this is
+ *   real scraped article text; false means Readability failed/was too short
+ *   and this is Google's own (often truncated, "...") search snippet instead
+ *   -- fine as supporting context, but never safe to quote verbatim as a
+ *   standalone direct answer.
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
@@ -212,9 +217,9 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 3000);
+    return { text: article.textContent.trim().slice(0, 3000), extracted: true };
   } catch (err) {
-    return fallbackSnippet || "";
+    return { text: fallbackSnippet || "", extracted: false };
   }
 }
 
@@ -277,12 +282,13 @@ async function retrieveSources(query, mode, debias = false) {
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
-    const text = await extractArticleText(r.link, r.snippet);
+    const { text, extracted } = await extractArticleText(r.link, r.snippet);
     return {
       index: i + 1,
       title: r.title,
       link: r.link,
       text,
+      extracted,
       tier: r.tier,
       tierLabel: r.tierLabel,
     };
