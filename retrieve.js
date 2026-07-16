@@ -7,6 +7,16 @@ const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
+const CONTESTED_KEYWORDS = [
+  "god", "trinity", "jesus god", "free will", "creationism",
+  "afterlife", "existential", "string theory", "abortion", "capitalism"
+];
+
+function isContestedQuery(query) {
+  const normalized = query.toLowerCase();
+  return CONTESTED_KEYWORDS.some(keyword => normalized.includes(keyword));
+}
+
 /**
  * Run one Serper search and return raw organic results.
  */
@@ -161,9 +171,31 @@ async function extractArticleText(url, fallbackSnippet) {
  *
  * Returns { aiSources: [{index,title,link,text}], moreSources: [{title,link,snippet}] }
  */
-async function retrieveSources(query) {
-  const results = await searchWhitelist(query);
+async function retrieveSources(query, mode) {
+  let results = [];
 
+  // If the user asks a contested question or manually turns on Contested Mode:
+  if (mode === "contested" || isContestedQuery(query)) {
+    console.log(`[Retrieve] Detected contested topic. Query partitioning active...`);
+
+    // Split the queries to search both sides specifically
+    const sideAQuery = `${query} arguments in favor perspective`;
+    const sideBQuery = `${query} arguments against critiques debate`;
+
+    // Search both in parallel
+    const [resultsA, resultsB] = await Promise.all([
+      searchWhitelist(sideAQuery),
+      searchWhitelist(sideBQuery)
+    ]);
+
+    // Merge them together
+    results = [...resultsA.slice(0, 3), ...resultsB.slice(0, 3)];
+  } else {
+    // Normal single-sided search
+    results = await searchWhitelist(query);
+  }
+
+  // Continue with full-text scraping...
   if (!results || results.length === 0) {
     return { aiSources: [], moreSources: [] };
   }
@@ -196,4 +228,4 @@ async function retrieveSources(query) {
   return { aiSources, moreSources };
 }
 
-module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted };
+module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted, isContestedQuery };
