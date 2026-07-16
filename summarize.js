@@ -39,7 +39,7 @@ async function summarize(question, sources, mode = "adult") {
     // instruction-following on "don't speculate, stay in the excerpts"
     // actually matters. The cheap de-bias query rewrite in retrieve.js
     // stays on mini since that's a much easier task.
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     max_tokens: 1400,
     response_format: {
       type: "json_schema",
