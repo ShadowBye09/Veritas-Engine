@@ -1,5 +1,5 @@
 // ask.js
-// Run: node ask.js "can we fix climate change" adult
+// Run: node ask.js "can we fix climate change" adult debias
 require("dotenv").config();
 const { retrieveSources } = require("./retrieve");
 const { summarize } = require("./summarize");
@@ -8,6 +8,7 @@ const { findHumanAnswer } = require("./humanAnswers");
 async function main() {
   const question = process.argv[2];
   const mode = process.argv[3] === "kid" ? "kid" : "adult";
+  const debias = process.argv[4] === "debias" || process.argv[4] === "true";
 
   if (!question) {
     console.error('Usage: node ask.js "your question" [kid|adult]');
@@ -33,8 +34,9 @@ async function main() {
   console.log("No human-written match -- falling through to AI pipeline.\n");
 
   console.log("Searching whitelist...");
-  // Pass BOTH question and mode so retrieve.js receives the parameters correctly
-  const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, mode);
+  // Pass question, mode, AND debias so retrieve.js actually splits the
+  // query when requested -- previously this third arg was silently omitted.
+  const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, mode, debias);
 
   if (aiSources.length === 0) {
     console.log("No sources found in whitelist for this query.\n");
