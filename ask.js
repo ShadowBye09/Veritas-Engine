@@ -3,7 +3,7 @@
 require("dotenv").config();
 const { retrieveSources } = require("./retrieve");
 const { summarize } = require("./summarize");
-const { getCachedResult, setCachedResult } = require("./cache"); // Import cache
+const { findHumanAnswer } = require("./humanAnswers");
 
 async function main() {
   const question = process.argv[2];
@@ -16,40 +16,37 @@ async function main() {
 
   console.log(`\nQuestion: ${question}  (mode: ${mode})`);
 
-  // --- CACHE CHECK STEP ---
-  console.log("Checking cache...");
-  const cached = getCachedResult(question, mode, 48); // Cache is valid for 48 hours
-  if (cached) {
-    console.log("⚡ [Cache Hit] Returning saved answer!");
-    printResult(cached);
+  // Tier 1: check human-written answers first, same as server.js does.
+  console.log("Checking human-written answers...");
+  const humanAnswer = findHumanAnswer(question);
+  if (humanAnswer) {
+    console.log("\n[HUMAN-WRITTEN ANSWER FOUND]\n");
+    console.log("ANSWER:");
+    console.log(humanAnswer[mode === "kid" ? "answer_kid" : "answer_adult"]);
+    console.log("\nDISAGREEMENT:");
+    console.log(humanAnswer.disagreement);
+    console.log("\nAUTHOR:", humanAnswer.author, "  REVIEWED BY:", (humanAnswer.reviewed_by || []).join(", "));
+    console.log("\nSOURCES:");
+    console.log(JSON.stringify(humanAnswer.sources, null, 2));
     return;
   }
-  console.log("❄️ [Cache Miss] Fetching fresh data...");
+  console.log("No human-written match -- falling through to AI pipeline.\n");
 
-  // --- ORIGINAL API STEP ---
   console.log("Searching whitelist...");
-  const sources = await retrieveSources(question);
+  const { aiSources, moreSources } = await retrieveSources(question);
 
-  if (sources.length === 0) {
+  if (aiSources.length === 0) {
     console.log("No sources found in whitelist for this query.\n");
     return;
   }
 
-  console.log(`Found ${sources.length} source(s):`);
-  sources.forEach((s) => console.log(`  [${s.index}] ${s.title} -- ${s.link}`));
+  console.log(`Found ${aiSources.length} AI source(s), ${moreSources.length} extra "read more" link(s):`);
+  aiSources.forEach((s) => console.log(`  [${s.index}] ${s.title} -- ${s.link}`));
 
   console.log("\nSummarizing with grounding constraint...\n");
-  const result = await summarize(question, sources, mode);
+  const result = await summarize(question, aiSources, mode);
 
-  // --- SAVE TO CACHE STEP ---
-  setCachedResult(question, mode, result);
-
-  printResult(result);
-}
-
-// Extracted printer helper to keep code clean
-function printResult(result) {
-  console.log("\nANSWER:");
+  console.log("ANSWER:");
   console.log(result.answer);
   console.log("\nDISAGREEMENT:");
   console.log(result.disagreement);
@@ -58,6 +55,8 @@ function printResult(result) {
   console.log(JSON.stringify(result.citations, null, 2));
   console.log("\nSOURCES:");
   console.log(JSON.stringify(result.sources, null, 2));
+  console.log("\nEXTRA READ-MORE LINKS:");
+  console.log(JSON.stringify(moreSources, null, 2));
 }
 
 main().catch((err) => {
