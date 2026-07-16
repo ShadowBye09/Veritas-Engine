@@ -84,6 +84,12 @@ function findHumanAnswer(question) {
   return match ? match.data : null;
 }
 
+function reloadHumanAnswers() {
+  console.log("Re-scanning the human-answers folder...");
+  loadHumanAnswers(); // This runs your folder scanner again
+  return answerIndex.length;
+}
+
 // Load once at startup.
 loadHumanAnswers();
 
