@@ -5,7 +5,7 @@
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
-const { NUM_SOURCES, WHITELIST_DOMAINS } = require("./config");
+const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
 /**
  * Serper wraps real Google search results, so standard Google search
@@ -36,7 +36,7 @@ async function searchWhitelist(query) {
     },
     body: JSON.stringify({
       q: fullQuery,
-      num: NUM_SOURCES,
+      num: READ_MORE_TOTAL,
     }),
   });
 
@@ -110,33 +110,46 @@ async function extractArticleText(url, fallbackSnippet) {
 }
 
 /**
- * Full retrieval step: search + extract for every result IN PARALLEL.
- * Returns [{ index, title, link, text }]
+ * Full retrieval step: search, then split results into two groups --
+ * the first NUM_SOURCES get full-text extraction (for the AI to read),
+ * the remaining ones (up to READ_MORE_TOTAL) stay as lightweight
+ * title/link/snippet only, for the "read more" expansion in the UI.
+ *
+ * Returns { aiSources: [{index,title,link,text}], moreSources: [{title,link,snippet}] }
  */
 async function retrieveSources(query) {
   const results = await searchWhitelist(query);
 
   if (!results || results.length === 0) {
-    return [];
+    return { aiSources: [], moreSources: [] };
   }
 
-  console.log(`  [Scraper] Launching parallel extraction for ${results.length} sources...`);
+  const forAI = results.slice(0, NUM_SOURCES);
+  const extras = results.slice(NUM_SOURCES);
 
-  // Fire off all scraping/extraction requests simultaneously!
-  const scrapePromises = results.map(async (r) => {
+  console.log(
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s) held for "read more"...`
+  );
+
+  const scrapePromises = forAI.map(async (r, i) => {
     const text = await extractArticleText(r.link, r.snippet);
     return {
-      index: r.index,
+      index: i + 1,
       title: r.title,
       link: r.link,
-      text: text,
+      text,
     };
   });
 
-  // Wait for all of them to resolve (or fail gracefully with their fallbacks)
-  const sources = await Promise.all(scrapePromises);
+  const aiSources = await Promise.all(scrapePromises);
 
-  return sources;
+  const moreSources = extras.map((r) => ({
+    title: r.title,
+    link: r.link,
+    snippet: r.snippet,
+  }));
+
+  return { aiSources, moreSources };
 }
 
 module.exports = { searchWhitelist, extractArticleText, retrieveSources };
