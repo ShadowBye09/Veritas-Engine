@@ -184,4 +184,4 @@ async function retrieveSources(query) {
   return { aiSources, moreSources };
 }
 
-module.exports = { searchWhitelist, extractArticleText, retrieveSources };
+module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted };
