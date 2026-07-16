@@ -48,7 +48,26 @@ module.exports = {
 
   // The hard-constraint system prompt. This is the piece that keeps the
   // model from blending in outside training knowledge.
-SYSTEM_PROMPT: (mode) => `You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
+SYSTEM_PROMPT: (mode) => {
+  if (mode === "contested") {
+    return `You are a neutral referee. 
+    You will be given a difficult question and some articles.
+    Your job is to explain both sides of the argument fairly.
+    - Do not choose a side.
+    - Explain what Side A believes using the articles.
+    - Explain what Side B believes using the articles.
+    - Use inline citations like [1] or [2] to show where you got your facts.
+
+    Your output must be in this exact JSON format:
+    {
+      "answer": "Side A argues... [1]. On the other hand, Side B argues... [2].",
+      "disagreement": "The core debate is whether...",
+      "confidence": "high",
+      "citations": [{"marker": "1", "claim": "paraphrase of Side A"}]
+    }`;
+  }
+  
+`You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
 You will be given a user's question and a set of text excerpts retrieved from pre-approved sources.
 
 Your ONLY job is to answer the question directly using the hard facts, data, statistics, and historical evidence present in the excerpts. 
