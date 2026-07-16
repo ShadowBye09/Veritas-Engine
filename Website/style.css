@@ -361,6 +361,58 @@ input:checked + .slider:before { transform: translateX(16px); }
   line-height: 1.4;
 }
 
+/* ---------- Direct answer (verbatim, tier-ranked snippet) ---------- */
+
+.direct-answer {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 22px 20px 16px;
+  margin-bottom: 1.25rem;
+}
+
+.direct-answer-mark {
+  position: absolute;
+  top: -6px;
+  left: 14px;
+  font-family: var(--font-display);
+  font-size: 46px;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0.35;
+}
+
+.direct-answer-text {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.direct-answer-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.direct-answer-source:hover .direct-answer-source-title {
+  color: var(--accent);
+}
+
+.context-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
 /* ---------- Evidence strata bar (signature element) ---------- */
 
 .strata-section {
