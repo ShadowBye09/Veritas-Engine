@@ -1,0 +1,74 @@
+// humanAnswers.js
+// Loads every JSON file in /human-answers at startup and matches incoming
+// questions against them. This is your highest-trust tier -- checked
+// BEFORE the AI pipeline ever runs.
+//
+// To add a new human-written answer: copy the example file's format, save
+// it as a new .json file in /human-answers, and restart the server (or
+// call reloadHumanAnswers() if you add a hot-reload trigger later).
+// Two-pass verification happens naturally here: have a second person
+// review the file via a GitHub pull request before merging it in.
+
+const fs = require("fs");
+const path = require("path");
+
+const ANSWERS_DIR = path.join(__dirname, "human-answers");
+
+let answerIndex = []; // [{ normalizedQuestions: [...], data: {...} }]
+
+function normalize(str) {
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[?.!,]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function loadHumanAnswers() {
+  const files = fs
+    .readdirSync(ANSWERS_DIR)
+    .filter((f) => f.endsWith(".json"));
+
+  answerIndex = files.map((filename) => {
+    const raw = fs.readFileSync(path.join(ANSWERS_DIR, filename), "utf-8");
+    const data = JSON.parse(raw);
+
+    const allPhrasings = [data.question, ...(data.aliases || [])].map(
+      normalize
+    );
+
+    return { normalizedQuestions: allPhrasings, data, filename };
+  });
+
+  console.log(
+    `[humanAnswers] Loaded ${answerIndex.length} human-written answer(s).`
+  );
+}
+
+/**
+ * Look for a human-written answer matching the user's question.
+ * Matching is intentionally simple and conservative right now: exact match
+ * (after normalizing punctuation/case) against the question or any of its
+ * aliases. This avoids false-positive matches that could serve the wrong
+ * answer to a subtly different question -- a real risk for a fact site.
+ * As you get more answers, this is the function to upgrade (e.g. adding
+ * fuzzy/embedding-based matching) -- but do that carefully and test it,
+ * since looseness here directly trades against accuracy.
+ *
+ * @param {string} question
+ * @returns {object|null} the matched answer's data, or null
+ */
+function findHumanAnswer(question) {
+  const normalizedInput = normalize(question);
+
+  const match = answerIndex.find((entry) =>
+    entry.normalizedQuestions.includes(normalizedInput)
+  );
+
+  return match ? match.data : null;
+}
+
+// Load once at startup.
+loadHumanAnswers();
+
+module.exports = { findHumanAnswer, loadHumanAnswers };
