@@ -1,20 +1,128 @@
 // retrieve.js
-// Step 1 + 2 of the pipeline: domain-scoped search via Serper.dev
-// (a Google SERP API), then full-text extraction.
+// Step 1 + 2 of the pipeline: Dynamic domain routing search via Serper.dev,
+// then full-text extraction.
 
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
+// Define thematic subsets of your whitelist to prevent Serper query overload
+const CATEGORIES = {
+  humanities: [
+    "plato.stanford.edu",
+    "iep.utm.edu",
+    "bibleodyssey.org",
+    "thetorah.com",
+    "worldhistory.org",
+    "pewresearch.org"
+  ],
+  science: [
+    "nasa.gov",
+    "noaa.gov",
+    "cdc.gov",
+    "nih.gov",
+    "who.int",
+    "nature.com",
+    "science.org",
+    "nejm.org",
+    "cochrane.org",
+    "arxiv.org",
+    "plos.org",
+    "scientificamerican.com"
+  ],
+  news_gov: [
+    "reuters.com",
+    "apnews.com",
+    "bls.gov",
+    "census.gov",
+    "federalreserve.gov",
+    "imf.org",
+    "worldbank.org",
+    "congress.gov",
+    "supremecourt.gov",
+    "uscourts.gov"
+  ]
+};
+
+// High-quality general default if no specific category matches
+const DEFAULT_SEARCH_DOMAINS = [
+  "reuters.com",
+  "apnews.com",
+  "scientificamerican.com",
+  "pewresearch.org",
+  "worldhistory.org"
+];
+
 /**
- * Run one Serper search and return raw organic results.
+ * Automatically determine the best whitelist domains to search based on query keywords.
+ * This keeps the OR site: chain short enough to satisfy Serper's free tier constraints.
  */
-async function runSerperQuery(q, num) {
+function getTargetDomains(query) {
+  const q = query.toLowerCase();
+
+  // Humanities keywords (Philosophy, Religion, Ancient History)
+  const humanitiesKeywords = [
+    "bible", "biblical", "torah", "god", "jesus", "religion", "religious", "church", 
+    "theology", "utilitarianism", "ethics", "moral", "philosophy", "philosophical", 
+    "plato", "aristotle", "socrates", "kant", "documentary hypothesis", "history", "ancient"
+  ];
+
+  // Science & Health keywords
+  const scienceKeywords = [
+    "climate", "warming", "space", "planet", "orbit", "nasa", "physics", "quantum", 
+    "particle", "star", "telescope", "disease", "vaccine", "cancer", "health", "virus", 
+    "medical", "study", "scientific", "cell", "biology", "earth", "trappist"
+  ];
+
+  // Politics, Economics & News keywords
+  const newsGovKeywords = [
+    "gdp", "inflation", "economy", "economic", "market", "fed", "interest", "tax", 
+    "law", "court", "ruling", "bill", "senate", "congress", "president", "election",
+    "unemployment", "labor", "world bank", "imf", "news", "report"
+  ];
+
+  if (humanitiesKeywords.some(keyword => q.includes(keyword))) {
+    console.log("  [Router] Routing query to Humanities (Philosophy, Religion & History) sources...");
+    return CATEGORIES.humanities;
+  }
+  
+  if (scienceKeywords.some(keyword => q.includes(keyword))) {
+    console.log("  [Router] Routing query to Science & Health sources...");
+    return CATEGORIES.science;
+  }
+
+  if (newsGovKeywords.some(keyword => q.includes(keyword))) {
+    console.log("  [Router] Routing query to News, Economics & Gov sources...");
+    return CATEGORIES.news_gov;
+  }
+
+  // Fallback to high-authority general sites if not classified
+  console.log("  [Router] Query did not match category rules. Routing to general authority sources...");
+  return DEFAULT_SEARCH_DOMAINS;
+}
+
+/**
+ * Builds standard Google search queries with OR'd site filters, restricted to 
+ * the dynamically targeted domains.
+ */
+function buildWhitelistQuery(query, targetDomains) {
+  const siteFilters = targetDomains.map((d) => `site:${d}`).join(" OR ");
+  return `${query} (${siteFilters})`;
+}
+
+/**
+ * Search via Serper.dev, restricted to targeted whitelist domains.
+ * Returns [{ title, link, snippet }]
+ */
+async function searchWhitelist(query) {
   const key = process.env.SERPER_API_KEY;
   if (!key) {
     throw new Error("Missing SERPER_API_KEY in environment");
   }
+
+  const targetDomains = getTargetDomains(query);
+  const fullQuery = buildWhitelistQuery(query, targetDomains);
 
   const res = await fetch("https://google.serper.dev/search", {
     method: "POST",
@@ -22,7 +130,10 @@ async function runSerperQuery(q, num) {
       "X-API-KEY": key,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ q, num }),
+    body: JSON.stringify({
+      q: fullQuery,
+      num: READ_MORE_TOTAL,
+    }),
   });
 
   if (!res.ok) {
@@ -31,88 +142,37 @@ async function runSerperQuery(q, num) {
   }
 
   const data = await res.json();
-  return data.organic || [];
-}
+  const results = data.organic || [];
 
-function isWhitelisted(link) {
-  try {
-    const hostname = new URL(link).hostname.replace(/^www\./, "");
-    return WHITELIST_DOMAINS.some(
-      (d) => hostname === d || hostname.endsWith(`.${d}`)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function toResultShape(item) {
-  return {
-    title: item.title,
-    link: item.link,
-    snippet: item.snippet || "",
-  };
-}
-
-/**
- * Search restricted to your whitelist.
- *
- * Serper's free/trial tier rejects overly complex query patterns -- a
- * single query with 15+ OR'd site: filters chained together triggers
- * "Query pattern not allowed for free accounts." So instead:
- *
- * 1. Run one plain query (no site: filters at all) -- cheap, always
- *    allowed, and filter the results down to whitelist domains only.
- * 2. If that doesn't yield enough results, fall back to individual
- *    "question site:domain.com" queries per whitelist domain, run in
- *    parallel, and merge/dedupe. This costs more API credits (one call
- *    per domain) but only runs when the plain search comes up short.
- *
- * Returns [{ title, link, snippet }]
- */
-async function searchWhitelist(query) {
-  const plainResults = await runSerperQuery(query, READ_MORE_TOTAL);
-  const filtered = plainResults.filter((r) => isWhitelisted(r.link));
-
-  if (filtered.length >= NUM_SOURCES) {
-    return filtered.map(toResultShape);
+  if (results.length === 0) {
+    return [];
   }
 
-  console.log(
-    `  [Search] Plain query only found ${filtered.length} whitelisted result(s) -- falling back to per-domain search...`
-  );
-
-  const perDomainPromises = WHITELIST_DOMAINS.map(async (domain) => {
+  // Double-verify each result's hostname matches our broad whitelist domains
+  const filtered = results.filter((r) => {
     try {
-      const results = await runSerperQuery(`${query} site:${domain}`, 2);
-      return results.filter((r) => isWhitelisted(r.link));
-    } catch (err) {
-      console.warn(`  [Search fallback] ${domain} -> ${err.message}`);
-      return [];
+      const hostname = new URL(r.link).hostname.replace(/^www\./, "");
+      return WHITELIST_DOMAINS.some(
+        (d) => hostname === d || hostname.endsWith(`.${d}`)
+      );
+    } catch {
+      return false;
     }
   });
 
-  const perDomainResults = (await Promise.all(perDomainPromises)).flat();
-
-  // Merge, dedupe by link, prioritizing whatever the plain search already found.
-  const merged = [...filtered, ...perDomainResults];
-  const seen = new Set();
-  const deduped = merged.filter((r) => {
-    if (seen.has(r.link)) return false;
-    seen.add(r.link);
-    return true;
-  });
-
-  return deduped.slice(0, READ_MORE_TOTAL).map(toResultShape);
+  return filtered.map((item) => ({
+    title: item.title,
+    link: item.link,
+    snippet: item.snippet || "",
+  }));
 }
 
 /**
  * Fetch a URL and extract clean article text (strips nav/ads/boilerplate).
- * Falls back to the search snippet if extraction fails -- some gov/science
- * sites block scraping or have unusual markup.
+ * Falls back to the search snippet if extraction fails.
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
-    // Create an AbortController to strictly enforce a fast 3-second timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); 
 
@@ -121,7 +181,7 @@ async function extractArticleText(url, fallbackSnippet) {
       signal: controller.signal,
     });
     
-    clearTimeout(timeoutId); // Clear timeout if it fetched in time
+    clearTimeout(timeoutId);
 
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
 
@@ -134,7 +194,7 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 4000); // Shorter slice speeds up LLM processing too!
+    return article.textContent.trim().slice(0, 4000); 
   } catch (err) {
     console.warn(`  [extract fallback] ${url} -> ${err.name === 'AbortError' ? 'Timeout' : err.message}`);
     return fallbackSnippet || "";
@@ -142,12 +202,7 @@ async function extractArticleText(url, fallbackSnippet) {
 }
 
 /**
- * Full retrieval step: search, then split results into two groups --
- * the first NUM_SOURCES get full-text extraction (for the AI to read),
- * the remaining ones (up to READ_MORE_TOTAL) stay as lightweight
- * title/link/snippet only, for the "read more" expansion in the UI.
- *
- * Returns { aiSources: [{index,title,link,text}], moreSources: [{title,link,snippet}] }
+ * Full retrieval step: search, then split results.
  */
 async function retrieveSources(query) {
   const results = await searchWhitelist(query);
@@ -160,7 +215,7 @@ async function retrieveSources(query) {
   const extras = results.slice(NUM_SOURCES);
 
   console.log(
-    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s) held for "read more"...`
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), keeping ${extras.length} extra link(s) for "read more"...`
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
@@ -184,4 +239,4 @@ async function retrieveSources(query) {
   return { aiSources, moreSources };
 }
 
-module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted };
+module.exports = { searchWhitelist, extractArticleText, retrieveSources };
