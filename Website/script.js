@@ -163,6 +163,8 @@ function showResult(question, data) {
     if (data.volatility) {
       volatilityBadge.style.display = "";
       volatilityBadge.textContent = VOLATILITY_LABELS[data.volatility] || data.volatility.toLowerCase();
+    } else {
+      volatilityBadge.style.display = "none";
     }
   }
 
@@ -177,6 +179,11 @@ function showResult(question, data) {
       byline.style.display = "";
       byline.textContent = parts.join(" · ");
     }
+  }
+
+  const aiNoteText = node.querySelector(".ai-note-text");
+  if (!isHuman && !data.directAnswer) {
+    aiNoteText.textContent = "this explanation wasn't written by a person — it's generated from the sources below";
   }
 
   // --- Evidence strata bar (AI tier only) ---
@@ -207,6 +214,29 @@ function showResult(question, data) {
     });
 
     strataSection.style.display = "";
+  } else {
+    strataSection.style.display = "none";
+  }
+
+  // --- Direct answer (verbatim, tier-ranked snippet) ---
+  const directAnswerBlock = node.querySelector(".direct-answer");
+  if (!isHuman && data.directAnswer) {
+    directAnswerBlock.style.display = "";
+    node.querySelector(".direct-answer-text").textContent = data.directAnswer.text || "";
+
+    const sourceLink = node.querySelector(".direct-answer-source");
+    sourceLink.href = data.directAnswer.link || "#";
+    node.querySelector(".direct-answer-source-title").textContent = data.directAnswer.title || data.directAnswer.link || "";
+
+    const info = tierInfo(data.directAnswer.tier);
+    const tierBadge = node.querySelector(".direct-answer-tier-badge");
+    tierBadge.textContent = info.label;
+    tierBadge.className = `direct-answer-tier-badge source-tier-badge ${info.key}`;
+  } else {
+    // The generic .ai-only sweep above already force-showed this element for
+    // AI-tier results -- explicitly re-hide it here when there's no snippet
+    // to show (e.g. extraction failed for every source).
+    directAnswerBlock.style.display = "none";
   }
 
   // --- Strategy banner ---
@@ -219,7 +249,18 @@ function showResult(question, data) {
     strategyBanner.style.display = "none";
   }
 
-  node.querySelector(".answer-text").textContent = data.answer || "";
+  // AI tier: the model writes "context" now, not the primary answer.
+  // Human tier keeps its own hand-written "answer" field, untouched.
+  const contextLabel = node.querySelector(".context-label");
+  if (isHuman) {
+    node.querySelector(".answer-text").textContent = data.answer || "";
+  } else {
+    node.querySelector(".answer-text").textContent = data.context || "";
+    // Only caption this as "background" when there's a direct-answer snippet
+    // above it -- otherwise this text IS the answer, not background to one.
+    contextLabel.style.display = data.directAnswer ? "" : "none";
+  }
+
   node.querySelector(".disagreement-text").textContent =
     data.disagreement || "No disagreement information available.";
   node.querySelector(".confidence-value").textContent = data.confidence || "unknown";
@@ -245,6 +286,8 @@ function showResult(question, data) {
       evidenceBtn.classList.toggle("open", opening);
       evidenceList.classList.toggle("open", opening);
     });
+  } else {
+    evidenceBtn.style.display = "none";
   }
 
   // --- Sources ---
@@ -342,7 +385,10 @@ function showResult(question, data) {
       listenLabel.textContent = "listen";
       return;
     }
-    const utterance = new SpeechSynthesisUtterance(data.answer || "");
+    const spoken = isHuman
+      ? (data.answer || "")
+      : [data.directAnswer ? data.directAnswer.text : "", data.context || ""].filter(Boolean).join(". ");
+    const utterance = new SpeechSynthesisUtterance(spoken);
     utterance.rate = 0.95;
     utterance.onend = () => {
       listenLabel.textContent = "listen";
