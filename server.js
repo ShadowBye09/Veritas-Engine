@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
+const { selectDirectAnswer } = require("./directAnswer");
 const { getCachedResult, setCachedResult, invalidateCachedResult } = require("./cache");
 const { classifyVolatility } = require("./volatility");
 const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
@@ -57,7 +58,8 @@ app.post("/ask", async (req, res) => {
     if (aiSources.length === 0) {
       return res.json({
         tier: "ai",
-        answer: "The approved sources don't have enough information to answer this.",
+        directAnswer: null,
+        context: "The approved sources don't have enough information to answer this.",
         disagreement: "No sources were found to evaluate.",
         confidence: "low",
         citations: [],
@@ -69,8 +71,14 @@ app.post("/ask", async (req, res) => {
     }
 
     const activeLLMMode = searchStrategy.isContested ? "contested" : safeMode;
-    const result = await summarize(question, aiSources, activeLLMMode);
-    
+
+    // Direct answer first -- summarize() needs the actual snippet text so it
+    // can avoid repeating it, not just know one exists. The small latency
+    // cost of doing this sequentially is worth it for that correctness.
+    const directAnswer = await selectDirectAnswer(question, aiSources);
+    const result = await summarize(question, aiSources, activeLLMMode, directAnswer);
+
+    result.directAnswer = directAnswer;
     result.moreSources = moreSources;
     result.searchStrategy = searchStrategy; 
     
