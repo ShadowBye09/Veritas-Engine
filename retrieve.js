@@ -1,6 +1,6 @@
 // retrieve.js
-// Step 1 + 2 of the pipeline: domain-scoped search via Serper.dev
-// (a Google SERP API), then full-text extraction.
+// Step 1 + 2 of the pipeline: Standard search via Serper.dev,
+// then filtering and full-text extraction.
 
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
@@ -8,16 +8,7 @@ const { Readability } = require("@mozilla/readability");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
 /**
- * Serper wraps real Google search results, so standard Google search
- * operators work -- including OR'd site: filters.
- */
-function buildWhitelistQuery(query) {
-  const siteFilters = WHITELIST_DOMAINS.map((d) => `site:${d}`).join(" OR ");
-  return `${query} (${siteFilters})`;
-}
-
-/**
- * Search via Serper.dev, restricted to whitelist domains.
+ * Search via Serper.dev, using standard queries to keep free tier active.
  * Returns [{ title, link, snippet }]
  */
 async function searchWhitelist(query) {
@@ -26,8 +17,8 @@ async function searchWhitelist(query) {
     throw new Error("Missing SERPER_API_KEY in environment");
   }
 
-  const fullQuery = buildWhitelistQuery(query);
-
+  // To bypass free-tier restrictions, we search standardly but request
+  // up to 40 results so we can filter down to our whitelist domains locally.
   const res = await fetch("https://google.serper.dev/search", {
     method: "POST",
     headers: {
@@ -35,8 +26,8 @@ async function searchWhitelist(query) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      q: fullQuery,
-      num: READ_MORE_TOTAL,
+      q: query,
+      num: 40, // Pull a broader set to ensure we capture whitelisted domains
     }),
   });
 
@@ -52,9 +43,7 @@ async function searchWhitelist(query) {
     return [];
   }
 
-  // Belt-and-suspenders: verify each result's hostname is actually on our
-  // whitelist before trusting it -- OR'd site: filters can occasionally
-  // let unrelated results slip through.
+  // Filter results locally to ONLY allow Whitelist Domains
   const filtered = results.filter((r) => {
     try {
       const hostname = new URL(r.link).hostname.replace(/^www\./, "");
@@ -75,12 +64,10 @@ async function searchWhitelist(query) {
 
 /**
  * Fetch a URL and extract clean article text (strips nav/ads/boilerplate).
- * Falls back to the search snippet if extraction fails -- some gov/science
- * sites block scraping or have unusual markup.
+ * Falls back to the search snippet if extraction fails.
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
-    // Create an AbortController to strictly enforce a fast 3-second timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); 
 
@@ -89,7 +76,7 @@ async function extractArticleText(url, fallbackSnippet) {
       signal: controller.signal,
     });
     
-    clearTimeout(timeoutId); // Clear timeout if it fetched in time
+    clearTimeout(timeoutId);
 
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
 
@@ -102,7 +89,7 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 4000); // Shorter slice speeds up LLM processing too!
+    return article.textContent.trim().slice(0, 4000); 
   } catch (err) {
     console.warn(`  [extract fallback] ${url} -> ${err.name === 'AbortError' ? 'Timeout' : err.message}`);
     return fallbackSnippet || "";
@@ -110,12 +97,8 @@ async function extractArticleText(url, fallbackSnippet) {
 }
 
 /**
- * Full retrieval step: search, then split results into two groups --
- * the first NUM_SOURCES get full-text extraction (for the AI to read),
- * the remaining ones (up to READ_MORE_TOTAL) stay as lightweight
- * title/link/snippet only, for the "read more" expansion in the UI.
- *
- * Returns { aiSources: [{index,title,link,text}], moreSources: [{title,link,snippet}] }
+ * Full retrieval step: search, filter, then split results.
+ * Top results are extracted for AI context, and the rest serve as raw links.
  */
 async function retrieveSources(query) {
   const results = await searchWhitelist(query);
@@ -124,11 +107,12 @@ async function retrieveSources(query) {
     return { aiSources: [], moreSources: [] };
   }
 
+  // Grab top 5 for the AI context, next 10 for the "Read More" list
   const forAI = results.slice(0, NUM_SOURCES);
-  const extras = results.slice(NUM_SOURCES);
+  const extras = results.slice(NUM_SOURCES, NUM_SOURCES + READ_MORE_TOTAL);
 
   console.log(
-    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s) held for "read more"...`
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), keeping ${extras.length} extra link(s) for "read more"...`
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
