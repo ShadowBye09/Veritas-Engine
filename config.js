@@ -27,6 +27,15 @@ module.exports = {
     "congress.gov",
     "supremecourt.gov",
     "uscourts.gov",
+    "arxiv.org",
+    "plos.org",
+    "scientificamerican.com",
+    "plato.stanford.edu",
+    "iep.utm.edu",
+    "bibleodyssey.org",
+    "thetorah.com",
+    "worldhistory.org",
+    "pewresearch.org",
   ],
 
   // How many search results the AI actually reads and summarizes from.
