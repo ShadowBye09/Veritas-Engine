@@ -1,13 +1,10 @@
-// server.js
-// Wraps the retrieve -> summarize -> cache pipeline as a live HTTP API.
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { getCachedResult, setCachedResult } = require("./cache");
-const { findHumanAnswer, reloadHumanAnswers, listLoadedAnswers } = require("./humanAnswers");
+const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
 
 const app = express();
 app.use(cors());
@@ -15,22 +12,16 @@ app.use(express.json());
 
 const CACHE_TTL_HOURS = 48;
 
-/**
- * POST /ask
- * body: { "question": "...", "mode": "adult"|"kid"|"contested", "debias": true|false }
- */
 app.post("/ask", async (req, res) => {
   const { question, mode, debias } = req.body || {};
 
   if (!question || typeof question !== "string") {
     return res.status(400).json({ error: "Missing or invalid 'question' field" });
   }
-  
-  const safeMode = ["kid", "adult", "contested"].includes(mode) ? mode : "adult";
-  const shouldDebias = !!debias;
+  const safeMode = mode === "kid" ? "kid" : "adult";
+  const shouldDebias = debias !== false; // default to true
 
   try {
-    // Tier 1: Human Answers
     const humanAnswer = findHumanAnswer(question);
     if (humanAnswer) {
       return res.json({
@@ -48,18 +39,14 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    // Tier 2: Cached Answers
-    // Modify cache key representation so debiased queries don't override standard queries
+    // Cache key based on mode and debiasing
     const cacheModeKey = `${safeMode}${shouldDebias ? "-debiased" : ""}`;
     const cached = getCachedResult(question, cacheModeKey, CACHE_TTL_HOURS);
     if (cached) {
       return res.json({ tier: "ai", ...cached, cached: true });
     }
 
-    // Inside server.js -> app.post("/ask", ...)
-// Replace the Tier 3 section with this:
-
-    // Tier 3: Fresh AI Pipeline
+    // Fresh AI pipeline
     const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, safeMode, shouldDebias);
 
     if (aiSources.length === 0) {
@@ -71,17 +58,16 @@ app.post("/ask", async (req, res) => {
         citations: [],
         sources: [],
         moreSources: [],
-        searchStrategy, // passed down
+        searchStrategy,
         cached: false,
       });
     }
 
-    // Only use 'contested' mode if the engine actually split the query
     const activeLLMMode = searchStrategy.isContested ? "contested" : safeMode;
     const result = await summarize(question, aiSources, activeLLMMode);
     
     result.moreSources = moreSources;
-    result.searchStrategy = searchStrategy; // Attach it to the final payload
+    result.searchStrategy = searchStrategy; 
     
     setCachedResult(question, cacheModeKey, result);
 
@@ -118,18 +104,19 @@ app.get("/debug/human-answers", (req, res) => {
   res.json(listLoadedAnswers());
 });
 
-// Admin hot-reloader
-app.post("/admin/reload-answers", (req, res) => {
-  const token = req.headers["x-admin-token"];
-  if (token !== (process.env.ADMIN_TOKEN || "local_secret_code")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const count = reloadHumanAnswers();
-  return res.json({ success: true, message: `Successfully reloaded ${count} human answers.` });
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Veritas API listening on port ${PORT}`);
 });
+```
+
+---
+
+### Crucial Step Before Running
+To ensure your computer reads these updates instead of the cached old file versions:
+1. Open your code editor (e.g., VS Code).
+2. Go to `File -> Save All` to ensure every script is updated.
+3. Completely kill your node server/terminal session by hitting `Ctrl + C` in command prompt.
+4. Run:
+   ```bash
+   node ask.js "can we fix climate change" adult
