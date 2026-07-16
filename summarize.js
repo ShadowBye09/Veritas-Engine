@@ -15,16 +15,16 @@ const client = new OpenAI();
  * @param {Array} sources - [{ index, title, link, text, tier, tierLabel }]
  * @param {"kid"|"adult"|"contested"} mode
  * @param {object|null} directAnswer - the snippet already shown to the user,
- *   from directAnswer.js -- passed in so the model doesn't just repeat it.
+ * from directAnswer.js -- passed in so the model doesn't just repeat it.
  */
 async function summarize(question, sources, mode = "adult", directAnswer = null) {
   if (!sources || sources.length === 0) {
     return {
-      context: "",
+      claim_title: question,
+      dont_panic_tip: "The sources are completely silent on this one.",
+      sides: [],
       disagreement: "No sources were found to evaluate.",
-      confidence: "low",
-      evidenceNotes: [],
-      citations: [],
+      underdog_scientist: { name: "None identified", breakthrough: "" }
     };
   }
 
@@ -52,36 +52,45 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
         schema: {
           type: "object",
           properties: {
-            evidenceNotes: {
+            claim_title: { type: "string" },
+            dont_panic_tip: { type: "string" },
+            sides: {
               type: "array",
               items: {
                 type: "object",
                 properties: {
-                  marker: { type: "string" },
-                  tier: { type: "string" },
-                  claim: { type: "string" }
+                  side_name: { type: "string" },
+                  pillars: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        title: { type: "string" },
+                        explanation: { type: "string" },
+                        academic_weight: { type: "string", enum: ["strong", "moderate", "weak"] },
+                        source_marker: { type: "string" }
+                      },
+                      required: ["title", "explanation", "academic_weight", "source_marker"],
+                      additionalProperties: false
+                    }
+                  }
                 },
-                required: ["marker", "tier", "claim"],
+                required: ["side_name", "pillars"],
                 additionalProperties: false
               }
             },
-            context: { type: "string" },
             disagreement: { type: "string" },
-            confidence: { type: "string", enum: ["high", "medium", "low"] },
-            citations: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  marker: { type: "string" },
-                  claim: { type: "string" }
-                },
-                required: ["marker", "claim"],
-                additionalProperties: false
-              }
+            underdog_scientist: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                breakthrough: { type: "string" }
+              },
+              required: ["name", "breakthrough"],
+              additionalProperties: false
             }
           },
-          required: ["evidenceNotes", "context", "disagreement", "confidence", "citations"],
+          required: ["claim_title", "dont_panic_tip", "sides", "disagreement", "underdog_scientist"],
           additionalProperties: false
         }
       }
@@ -99,11 +108,11 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
     parsed = JSON.parse(raw);
   } catch (err) {
     parsed = {
-      context: raw,
+      claim_title: question,
+      dont_panic_tip: "The central computer is feeling a bit dizzy.",
+      sides: [],
       disagreement: "(unparsed model output -- check formatting)",
-      confidence: "low",
-      evidenceNotes: [],
-      citations: [],
+      underdog_scientist: { name: "None identified", breakthrough: "" }
     };
   }
 
