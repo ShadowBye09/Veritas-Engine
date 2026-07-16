@@ -1,11 +1,11 @@
 // retrieve.js
-// Step 1 + 2 of the pipeline: domain-scoped search via Serper.dev
-// (a Google SERP API), then full-text extraction.
+// Step 1 + 2 of the pipeline: domain-scoped search via Serper.dev,
+// then full-text extraction with smart, fast, and balanced query de-biasing.
 
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
-const OpenAI = require("openai"); // Added missing import!
+const OpenAI = require("openai"); // Ensure OpenAI is imported!
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
 // Initialize OpenAI client
@@ -13,7 +13,8 @@ const openai = new OpenAI();
 
 const CONTESTED_KEYWORDS = [
   "god", "trinity", "jesus god", "free will", "creationism",
-  "afterlife", "existential", "string theory", "abortion", "capitalism"
+  "afterlife", "existential", "string theory", "abortion", "capitalism",
+  "fake", "conspiracy", "hoax", "staged", "climate change"
 ];
 
 function isContestedQuery(query) {
@@ -68,26 +69,25 @@ function toResultShape(item) {
 }
 
 /**
- * SMART DE-BIAS ENGINE: Decides if a query needs splitting, then creates the queries.
+ * STRIPS BIAS & DE-BIASED ENGINE: Rewrites highly biased or leading questions
+ * into two structurally balanced, objective search terms.
  */
 async function generateDeBiasedQueries(rawQuestion) {
-  const systemPrompt = `You are an elite search query analyzer for Veritas, an objective research engine.
-Your task is to analyze the user's question and determine if it represents a topic with genuine scholarly, philosophical, scientific, or cultural debate (a "contested" topic), or if it is a simple factual request (e.g., "what is the capital of France", "how tall is the eiffel tower").
+  const systemPrompt = `You are an elite search query de-biasing engine.
+Your task is to take a user's question (which may be loaded, biased, leading, or a conspiracy theory) and split it into TWO separate neutral, academic queries to find balanced evidence.
 
-If it IS contested, biased, or involves controversy/debate:
-1. Set "is_contested" to true.
-2. Create "query_supporting": a neutral academic search finding evidence supporting the premise.
-3. Create "query_opposing": a neutral academic search finding counterarguments or skeptic rebuttals.
+- Query A: Search terms to find consensus, proof, or mainstream evidence.
+- Query B: Search terms to find alternative perspectives, criticisms, or skeptics' arguments.
+Keep the search terms highly concise (2-4 words), objective, and stripped of emotional words.
 
-If it is NOT contested (simple facts):
-1. Set "is_contested" to false.
-2. Leave the queries empty strings.
+Example for: "How did they fake the moon landing?"
+Query A: "Apollo moon landing evidence"
+Query B: "Apollo moon landing conspiracy arguments"
 
 Respond ONLY with a valid JSON object of this exact shape:
 {
-  "is_contested": boolean,
-  "query_supporting": "string",
-  "query_opposing": "string"
+  "query_supporting": "concise search query for Side A",
+  "query_opposing": "concise search query for Side B"
 }`;
 
   try {
@@ -96,62 +96,43 @@ Respond ONLY with a valid JSON object of this exact shape:
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Analyze and de-bias this question: "${rawQuestion}"` }
+        { role: "user", content: `De-bias this question: "${rawQuestion}"` }
       ]
     });
     return JSON.parse(response.choices[0].message.content);
   } catch (error) {
     console.warn("Failed to de-bias query, falling back to original:", error.message);
-    return { is_contested: false, query_supporting: "", query_opposing: "" };
+    return { query_supporting: rawQuestion, query_opposing: rawQuestion };
   }
 }
 
-function chunkArray(array, size) {
-  const chunks = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
-  }
-  return chunks;
-}
-
+/**
+ * Highly optimized, ultra-fast whitelist search.
+ * Grabs the top 40 Google results in a single roundtrip, then filters them.
+ * This guarantees speed and eliminates multiple parallel Serper queries.
+ */
 async function searchWhitelist(query) {
-  const plainResults = await runSerperQuery(query, READ_MORE_TOTAL);
-  const filtered = plainResults.filter((r) => isWhitelisted(r.link));
+  try {
+    // Request 40 results to maximize whitelisted hits in ONE fast call
+    const plainResults = await runSerperQuery(query, 40);
+    const filtered = plainResults.filter((r) => isWhitelisted(r.link));
 
-  if (filtered.length >= NUM_SOURCES) {
-    return filtered.map(toResultShape);
-  }
-
-  const domainChunks = chunkArray(WHITELIST_DOMAINS, 5);
-  const batchPromises = domainChunks.map(async (chunk) => {
-    try {
-      const siteFilter = chunk.map(domain => `site:${domain}`).join(" OR ");
-      const combinedQuery = `${query} (${siteFilter})`;
-      
-      const results = await runSerperQuery(combinedQuery, 3);
-      return results.filter((r) => isWhitelisted(r.link));
-    } catch (err) {
-      return [];
+    if (filtered.length > 0) {
+      return filtered.slice(0, READ_MORE_TOTAL).map(toResultShape);
     }
-  });
-
-  const batchResults = (await Promise.all(batchPromises)).flat();
-
-  const merged = [...filtered, ...batchResults];
-  const seen = new Set();
-  const deduped = merged.filter((r) => {
-    if (seen.has(r.link)) return false;
-    seen.add(r.link);
-    return true;
-  });
-
-  return deduped.slice(0, READ_MORE_TOTAL).map(toResultShape);
+  } catch (err) {
+    console.error(`Whitelist search failed for "${query}":`, err.message);
+  }
+  return [];
 }
 
+/**
+ * Fetch a URL and extract clean article text with strict timeout.
+ */
 async function extractArticleText(url, fallbackSnippet) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); 
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // Tightened to 2 seconds for speed
 
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; VeritasBot/0.1)" },
@@ -171,52 +152,57 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 4000);
+    return article.textContent.trim().slice(0, 3000); // Sliced to 3000 chars to decrease LLM payload latency
   } catch (err) {
     return fallbackSnippet || "";
   }
 }
 
 /**
- * Full retrieval step with optional smart de-biased partitioning.
+ * Full retrieval step. Generates clean, dual-perspective queries, searches
+ * them in parallel, and interleaves the results to ensure perfect balance.
  */
-async function retrieveSources(query, mode = "adult", debias = true) {
+async function retrieveSources(query, mode) {
   let results = [];
   let searchStrategy = { isContested: false, queryA: "", queryB: "" };
 
-  // Determine if we should perform De-Biased query splitting
-  if (debias || mode === "contested" || isContestedQuery(query)) {
+  if (mode === "contested" || isContestedQuery(query)) {
+    console.log(`[Retrieve] Detected contested topic. Rewriting queries neutrally...`);
+
+    // 1. Rewrite queries using the AI de-biasing assistant
     const strategy = await generateDeBiasedQueries(query);
-    
-    if (strategy.is_contested) {
-      console.log(`[Retrieve] Contested topic. Split: "${strategy.query_supporting}" vs "${strategy.query_opposing}"`);
-      searchStrategy = { isContested: true, queryA: strategy.query_supporting, queryB: strategy.query_opposing };
+    console.log(`   -> Side A query: "${strategy.query_supporting}"`);
+    console.log(`   -> Side B query: "${strategy.query_opposing}"`);
 
-      // Fetch both sides in parallel
-      const [resultsA, resultsB] = await Promise.all([
-        searchWhitelist(strategy.query_supporting),
-        searchWhitelist(strategy.query_opposing)
-      ]);
+    searchStrategy = {
+      isContested: true,
+      queryA: strategy.query_supporting,
+      queryB: strategy.query_opposing
+    };
 
-      // Interleave results to guarantee balance
-      const combined = [];
-      const maxLen = Math.max(resultsA.length, resultsB.length);
-      for (let i = 0; i < maxLen; i++) {
-        if (resultsA[i]) combined.push(resultsA[i]);
-        if (resultsB[i]) combined.push(resultsB[i]);
-      }
+    // 2. Fetch both sides in parallel
+    const [resultsA, resultsB] = await Promise.all([
+      searchWhitelist(strategy.query_supporting),
+      searchWhitelist(strategy.query_opposing)
+    ]);
 
-      const seen = new Set();
-      results = combined.filter((r) => {
-        if (seen.has(r.link)) return false;
-        seen.add(r.link);
-        return true;
-      });
-    } else {
-      console.log(`[Retrieve] Topic is purely factual. Skipping dual-search partition.`);
-      results = await searchWhitelist(query);
+    // Interleave the results perfectly (A1, B1, A2, B2...) to guarantee balance
+    const combined = [];
+    const maxLen = Math.max(resultsA.length, resultsB.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (resultsA[i]) combined.push(resultsA[i]);
+      if (resultsB[i]) combined.push(resultsB[i]);
     }
+
+    // Deduplicate any overlapping links
+    const seen = new Set();
+    results = combined.filter((r) => {
+      if (seen.has(r.link)) return false;
+      seen.add(r.link);
+      return true;
+    });
   } else {
+    // Normal single-sided search
     results = await searchWhitelist(query);
   }
 
@@ -224,11 +210,12 @@ async function retrieveSources(query, mode = "adult", debias = true) {
     return { aiSources: [], moreSources: [], searchStrategy };
   }
 
+  // Segment sources for AI reading and UI "read more" links
   const forAI = results.slice(0, NUM_SOURCES);
   const extras = results.slice(NUM_SOURCES);
 
   console.log(
-    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s) held for "read more"...`
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s)...`
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
