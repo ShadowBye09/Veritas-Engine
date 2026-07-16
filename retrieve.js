@@ -103,7 +103,7 @@ Respond ONLY with a valid JSON object of this exact shape:
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
