@@ -11,17 +11,14 @@
 
 const fs = require("fs");
 const path = require("path");
+const { normalizeQuestion } = require("./normalize");
 
 const ANSWERS_DIR = path.join(__dirname, "human-answers");
 
 let answerIndex = []; // [{ normalizedQuestions: [...], data: {...} }]
 
 function normalize(str) {
-  return str
-    .toLowerCase()
-    .trim()
-    .replace(/[?.!,]/g, "")
-    .replace(/\s+/g, " ");
+  return normalizeQuestion(str);
 }
 
 function loadHumanAnswers() {
