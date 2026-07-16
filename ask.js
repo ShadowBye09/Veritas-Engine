@@ -17,7 +17,7 @@ async function main() {
 
   console.log(`\nQuestion: ${question}  (mode: ${mode})`);
 
-  // Tier 1: Check human-written answers first, same as server.js does.
+  // Tier 1: Check human-written answers first
   console.log("Checking human-written answers...");
   const humanAnswer = findHumanAnswer(question);
   if (humanAnswer) {
@@ -33,7 +33,7 @@ async function main() {
   }
   console.log("No human-written match -- falling through to Cache / AI pipeline.\n");
 
-  // Tier 2: Check cached results.
+  // Tier 2: Check cached results
   console.log("Checking cache...");
   const cached = getCachedResult(question, mode);
   if (cached) {
@@ -51,7 +51,7 @@ async function main() {
   }
   console.log("❄️ [Cache Miss] Fetching fresh data...\n");
 
-  // Tier 3: Search whitelist.
+  // Tier 3: Search whitelist
   console.log("Searching whitelist...");
   const { aiSources, moreSources } = await retrieveSources(question, mode);
 
