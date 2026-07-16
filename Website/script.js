@@ -417,6 +417,11 @@ function buildSourceLink(s) {
   badge.textContent = info.label;
   topRow.appendChild(badge);
 
+  // Real text-node space, not just CSS flex gap -- gap doesn't produce an
+  // actual space character, so copy/pasting the rendered text can otherwise
+  // paste the badge and title jammed together with no separator.
+  topRow.appendChild(document.createTextNode(" "));
+
   const spanTitle = document.createElement("span");
   spanTitle.className = "source-title";
   spanTitle.textContent = s.title || s.link;
