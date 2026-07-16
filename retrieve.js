@@ -1,11 +1,15 @@
 // retrieve.js
 // Step 1 + 2 of the pipeline: domain-scoped search via Serper.dev
-// (a Google SERP API), then full-text extraction.
+// (a Google SERP API), optional de-biasing query splitting, then full-text extraction.
 
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
+const OpenAI = require("openai");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
+
+// Initialize OpenAI client (automatically uses process.env.OPENAI_API_KEY)
+const openai = new OpenAI();
 
 const CONTESTED_KEYWORDS = [
   "god", "trinity", "jesus god", "free will", "creationism",
@@ -64,21 +68,40 @@ function toResultShape(item) {
 }
 
 /**
- * Search restricted to your whitelist.
- *
- * Serper's free/trial tier rejects overly complex query patterns -- a
- * single query with 15+ OR'd site: filters chained together triggers
- * "Query pattern not allowed for free accounts." So instead:
- *
- * 1. Run one plain query (no site: filters at all) -- cheap, always
- *    allowed, and filter the results down to whitelist domains only.
- * 2. If that doesn't yield enough results, fall back to individual
- *    "question site:domain.com" queries per whitelist domain, run in
- *    parallel, and merge/dedupe. This costs more API credits (one call
- *    per domain) but only runs when the plain search comes up short.
- *
- * Returns [{ title, link, snippet }]
+ * Strips bias from a user's question and creates two structurally 
+ * balanced search queries representing different sides of the coin.
  */
+async function generateDeBiasedQueries(rawQuestion) {
+  const systemPrompt = `You are a query de-biasing assistant. 
+Your task is to take a user's question (which may be loaded with bias, poorly phrased, or leading) and break it down into TWO neutral, highly optimized search queries for academic search engines.
+- Query A: Formulated to find evidence, arguments, or perspectives supporting the main premise.
+- Query B: Formulated to find counterarguments, criticisms, or skeptical perspectives opposing the main premise.
+- Keep them academic, direct, and stripped of emotional language.
+
+Respond ONLY with a valid JSON object of this exact shape:
+{
+  "query_supporting": "neutral academic search query for Side A",
+  "query_opposing": "neutral academic search query for Side B"
+}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `De-bias this question: "${rawQuestion}"` }
+      ]
+    });
+
+    const parsed = JSON.parse(response.choices[0].message.content);
+    return parsed;
+  } catch (error) {
+    console.warn("Failed to de-bias query, falling back to original:", error.message);
+    return { query_supporting: rawQuestion, query_opposing: rawQuestion };
+  }
+}
+
 // A simple helper to split our big list of websites into small groups
 function chunkArray(array, size) {
   const chunks = [];
@@ -129,12 +152,9 @@ async function searchWhitelist(query) {
 
 /**
  * Fetch a URL and extract clean article text (strips nav/ads/boilerplate).
- * Falls back to the search snippet if extraction fails -- some gov/science
- * sites block scraping or have unusual markup.
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
-    // Create an AbortController to strictly enforce a fast 3-second timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); 
 
@@ -143,7 +163,7 @@ async function extractArticleText(url, fallbackSnippet) {
       signal: controller.signal,
     });
     
-    clearTimeout(timeoutId); // Clear timeout if it fetched in time
+    clearTimeout(timeoutId);
 
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
 
@@ -156,7 +176,7 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 4000); // Shorter slice speeds up LLM processing too!
+    return article.textContent.trim().slice(0, 4000);
   } catch (err) {
     console.warn(`  [extract fallback] ${url} -> ${err.name === 'AbortError' ? 'Timeout' : err.message}`);
     return fallbackSnippet || "";
@@ -164,38 +184,46 @@ async function extractArticleText(url, fallbackSnippet) {
 }
 
 /**
- * Full retrieval step: search, then split results into two groups --
- * the first NUM_SOURCES get full-text extraction (for the AI to read),
- * the remaining ones (up to READ_MORE_TOTAL) stay as lightweight
- * title/link/snippet only, for the "read more" expansion in the UI.
- *
- * Returns { aiSources: [{index,title,link,text}], moreSources: [{title,link,snippet}] }
+ * Full retrieval step with optional de-biased partitioning.
  */
-async function retrieveSources(query, mode) {
+async function retrieveSources(query, mode, debias = false) {
   let results = [];
 
-  // If the user asks a contested question or manually turns on Contested Mode:
-  if (mode === "contested" || isContestedQuery(query)) {
-    console.log(`[Retrieve] Detected contested topic. Query partitioning active...`);
+  // Determine if we should perform De-Biased query splitting
+  if (debias || mode === "contested" || isContestedQuery(query)) {
+    console.log(`[Retrieve] Activating Multi-Perspective Query Split...`);
+    
+    // De-bias the query using our helper
+    const { query_supporting, query_opposing } = await generateDeBiasedQueries(query);
+    console.log(`  -> Supporting Search: "${query_supporting}"`);
+    console.log(`  -> Opposing Search: "${query_opposing}"`);
 
-    // Split the queries to search both sides specifically
-    const sideAQuery = `${query} arguments in favor perspective`;
-    const sideBQuery = `${query} arguments against critiques debate`;
-
-    // Search both in parallel
+    // Fetch both in parallel
     const [resultsA, resultsB] = await Promise.all([
-      searchWhitelist(sideAQuery),
-      searchWhitelist(sideBQuery)
+      searchWhitelist(query_supporting),
+      searchWhitelist(query_opposing)
     ]);
 
-    // Merge them together
-    results = [...resultsA.slice(0, 3), ...resultsB.slice(0, 3)];
+    // Interleave the results (take up to 3 from each side) to guarantee balance
+    const combined = [];
+    const maxLen = Math.max(resultsA.length, resultsB.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (resultsA[i]) combined.push(resultsA[i]);
+      if (resultsB[i]) combined.push(resultsB[i]);
+    }
+
+    // Deduplicate in case any link appeared on both sides
+    const seen = new Set();
+    results = combined.filter((r) => {
+      if (seen.has(r.link)) return false;
+      seen.add(r.link);
+      return true;
+    });
   } else {
     // Normal single-sided search
     results = await searchWhitelist(query);
   }
 
-  // Continue with full-text scraping...
   if (!results || results.length === 0) {
     return { aiSources: [], moreSources: [] };
   }
@@ -204,7 +232,7 @@ async function retrieveSources(query, mode) {
   const extras = results.slice(NUM_SOURCES);
 
   console.log(
-    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s) held for "read more"...`
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s), ${extras.length} extra link(s)...`
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
