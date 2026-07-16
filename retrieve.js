@@ -48,6 +48,22 @@ function isWhitelisted(link) {
   }
 }
 
+/**
+ * Split WHITELIST_DOMAINS into chunks and build "(site:a OR site:b OR ...)"
+ * groups. Chunking keeps each query short/fast and lets us run them in
+ * parallel instead of relying on one giant OR string across ~30 domains.
+ */
+function buildSiteFilterGroups(domains, chunkSize = 8) {
+  const groups = [];
+  for (let i = 0; i < domains.length; i += chunkSize) {
+    const chunk = domains.slice(i, i + chunkSize);
+    groups.push(`(${chunk.map((d) => `site:${d}`).join(" OR ")})`);
+  }
+  return groups;
+}
+
+const SITE_FILTER_GROUPS = buildSiteFilterGroups(WHITELIST_DOMAINS);
+
 function toResultShape(item) {
   return {
     title: item.title,
@@ -66,11 +82,18 @@ Your task is to take a user's question (which may be loaded, biased, leading, or
 
 - Query A: Search terms to find consensus, proof, or mainstream evidence.
 - Query B: Search terms to find alternative perspectives, criticisms, or skeptics' arguments.
-Keep the search terms highly concise (2-4 words), objective, and stripped of emotional words.
+
+Keep the search terms objective and stripped of emotional/loaded words, but
+KEEP specific named entities, proper nouns, dates, and technical terms from
+the original question -- these queries will be run against a narrow set of
+academic/institutional domains (site: filters already applied separately),
+so losing specificity to save words hurts result quality far more than a
+slightly longer query would. Aim for 4-7 words, not 2-4 -- enough to stay
+specific while still reading as a clean search query, not a sentence.
 
 Example for: "How did they fake the moon landing?"
-Query A: "Apollo moon landing evidence"
-Query B: "Apollo moon landing conspiracy arguments"
+Query A: "Apollo 11 moon landing physical evidence"
+Query B: "Apollo moon landing conspiracy theory claims"
 
 Respond ONLY with a valid JSON object of this exact shape:
 {
@@ -95,16 +118,45 @@ Respond ONLY with a valid JSON object of this exact shape:
 }
 
 /**
- * Highly optimized, ultra-fast whitelist search.
- * Grabs the top 40 Google results in a single roundtrip, then filters them.
+ * Domain-scoped whitelist search. Instead of running one generic Google
+ * query and hoping whitelisted domains show up in the top 40 results, we
+ * fan out one query PER site: group (query + "(site:a OR site:b ...)"),
+ * so every result Google returns is already scoped to our sources. This
+ * gives far higher yield and relevance than post-hoc filtering, especially
+ * for short/de-biased queries where generic results skew toward news
+ * aggregators, Wikipedia, Reddit, etc. that never make the whitelist.
+ *
+ * isWhitelisted() is still applied afterward as a safety net -- site:
+ * filters are a strong signal to Google/Serper but not a hard guarantee.
  */
-async function searchWhitelist(query) {
+async function searchWhitelist(query, resultsPerGroup = 10) {
   try {
-    const plainResults = await runSerperQuery(query, 40);
-    const filtered = plainResults.filter((r) => isWhitelisted(r.link));
+    const groupQueries = SITE_FILTER_GROUPS.map(
+      (siteFilter) => `${query} ${siteFilter}`
+    );
 
-    if (filtered.length > 0) {
-      return filtered.slice(0, READ_MORE_TOTAL).map(toResultShape);
+    const groupResults = await Promise.all(
+      groupQueries.map((q) =>
+        runSerperQuery(q, resultsPerGroup).catch((err) => {
+          console.error(`Whitelist group search failed for "${q}":`, err.message);
+          return [];
+        })
+      )
+    );
+
+    const combined = groupResults.flat();
+    const filtered = combined.filter((r) => isWhitelisted(r.link));
+
+    // De-dupe by link (multiple groups or domains can surface the same URL)
+    const seen = new Set();
+    const deduped = filtered.filter((r) => {
+      if (seen.has(r.link)) return false;
+      seen.add(r.link);
+      return true;
+    });
+
+    if (deduped.length > 0) {
+      return deduped.slice(0, READ_MORE_TOTAL).map(toResultShape);
     }
   } catch (err) {
     console.error(`Whitelist search failed for "${query}":`, err.message);
