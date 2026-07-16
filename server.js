@@ -7,11 +7,18 @@ const { getCachedResult, setCachedResult } = require("./cache");
 const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
 
 const app = express();
-app.use(cors());
+app.use(cors()); // allows Bubble's servers to call this API from a browser/backend workflow
 app.use(express.json());
 
 const CACHE_TTL_HOURS = 48;
 
+/**
+ * POST /ask
+ * body: { "question": "is climate change caused by humans", "mode": "adult", "debias": true }
+ *
+ * Returns the same shape ask.js prints, as JSON:
+ * { answer, disagreement, confidence, citations, sources, cached, searchStrategy }
+ */
 app.post("/ask", async (req, res) => {
   const { question, mode, debias } = req.body || {};
 
@@ -39,14 +46,14 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    // Cache key based on mode and debiasing
+    // Cache key based on mode and debiasing settings
     const cacheModeKey = `${safeMode}${shouldDebias ? "-debiased" : ""}`;
     const cached = getCachedResult(question, cacheModeKey, CACHE_TTL_HOURS);
     if (cached) {
       return res.json({ tier: "ai", ...cached, cached: true });
     }
 
-    // Fresh AI pipeline
+    // Fresh AI pipeline using updated retrieveSources
     const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, safeMode, shouldDebias);
 
     if (aiSources.length === 0) {
@@ -63,6 +70,7 @@ app.post("/ask", async (req, res) => {
       });
     }
 
+    // Use 'contested' prompt styling only if the search queries were split
     const activeLLMMode = searchStrategy.isContested ? "contested" : safeMode;
     const result = await summarize(question, aiSources, activeLLMMode);
     
@@ -108,15 +116,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Veritas API listening on port ${PORT}`);
 });
-```
-
----
-
-### Crucial Step Before Running
-To ensure your computer reads these updates instead of the cached old file versions:
-1. Open your code editor (e.g., VS Code).
-2. Go to `File -> Save All` to ensure every script is updated.
-3. Completely kill your node server/terminal session by hitting `Ctrl + C` in command prompt.
-4. Run:
-   ```bash
-   node ask.js "can we fix climate change" adult
