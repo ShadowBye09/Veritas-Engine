@@ -56,8 +56,11 @@ app.post("/ask", async (req, res) => {
       return res.json({ tier: "ai", ...cached, cached: true });
     }
 
+    // Inside server.js -> app.post("/ask", ...)
+// Replace the Tier 3 section with this:
+
     // Tier 3: Fresh AI Pipeline
-    const { aiSources, moreSources } = await retrieveSources(question, safeMode, shouldDebias);
+    const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, safeMode, shouldDebias);
 
     if (aiSources.length === 0) {
       return res.json({
@@ -68,14 +71,17 @@ app.post("/ask", async (req, res) => {
         citations: [],
         sources: [],
         moreSources: [],
+        searchStrategy, // passed down
         cached: false,
       });
     }
 
-    // Use contested mode instructions if we successfully split query perspectives
-    const activeLLMMode = shouldDebias ? "contested" : safeMode;
+    // Only use 'contested' mode if the engine actually split the query
+    const activeLLMMode = searchStrategy.isContested ? "contested" : safeMode;
     const result = await summarize(question, aiSources, activeLLMMode);
+    
     result.moreSources = moreSources;
+    result.searchStrategy = searchStrategy; // Attach it to the final payload
     
     setCachedResult(question, cacheModeKey, result);
 
