@@ -5,10 +5,12 @@
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
-const OpenAI = require("openai"); 
+const OpenAI = require("openai");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
 const openai = new OpenAI();
+
+const DOMAIN_STRINGS = WHITELIST_DOMAINS.map((d) => d.domain);
 
 /**
  * Run one Serper search and return raw organic results.
@@ -37,21 +39,30 @@ async function runSerperQuery(q, num) {
   return data.organic || [];
 }
 
-function isWhitelisted(link) {
+/**
+ * Look up the whitelist entry (tier + label) for a URL's hostname, if any.
+ */
+function getDomainMeta(link) {
   try {
     const hostname = new URL(link).hostname.replace(/^www\./, "");
-    return WHITELIST_DOMAINS.some(
-      (d) => hostname === d || hostname.endsWith(`.${d}`)
+    return (
+      WHITELIST_DOMAINS.find(
+        (d) => hostname === d.domain || hostname.endsWith(`.${d.domain}`)
+      ) || null
     );
   } catch {
-    return false;
+    return null;
   }
 }
 
+function isWhitelisted(link) {
+  return getDomainMeta(link) !== null;
+}
+
 /**
- * Split WHITELIST_DOMAINS into chunks and build "(site:a OR site:b OR ...)"
- * groups. Chunking keeps each query short/fast and lets us run them in
- * parallel instead of relying on one giant OR string across ~30 domains.
+ * Split domains into chunks and build "(site:a OR site:b OR ...)" groups.
+ * Chunking keeps each query short/fast and lets us run them in parallel
+ * instead of relying on one giant OR string across ~30 domains.
  */
 function buildSiteFilterGroups(domains, chunkSize = 8) {
   const groups = [];
@@ -62,13 +73,16 @@ function buildSiteFilterGroups(domains, chunkSize = 8) {
   return groups;
 }
 
-const SITE_FILTER_GROUPS = buildSiteFilterGroups(WHITELIST_DOMAINS);
+const SITE_FILTER_GROUPS = buildSiteFilterGroups(DOMAIN_STRINGS);
 
 function toResultShape(item) {
+  const meta = getDomainMeta(item.link);
   return {
     title: item.title,
     link: item.link,
     snippet: item.snippet || "",
+    tier: meta ? meta.tier : null,
+    tierLabel: meta ? meta.label : null,
   };
 }
 
@@ -102,8 +116,10 @@ Respond ONLY with a valid JSON object of this exact shape:
 }`;
 
   try {
+    // Cheap/fast model is fine here -- this is a small rewriting task, not
+    // the grounded-synthesis step, so it doesn't need the stronger model.
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -125,6 +141,9 @@ Respond ONLY with a valid JSON object of this exact shape:
  * gives far higher yield and relevance than post-hoc filtering, especially
  * for short/de-biased queries where generic results skew toward news
  * aggregators, Wikipedia, Reddit, etc. that never make the whitelist.
+ *
+ * Results are sorted by tier (1 = most trusted first) before being trimmed,
+ * so if we get more whitelisted hits than we need, we keep the best ones.
  *
  * isWhitelisted() is still applied afterward as a safety net -- site:
  * filters are a strong signal to Google/Serper but not a hard guarantee.
@@ -156,7 +175,10 @@ async function searchWhitelist(query, resultsPerGroup = 10) {
     });
 
     if (deduped.length > 0) {
-      return deduped.slice(0, READ_MORE_TOTAL).map(toResultShape);
+      const shaped = deduped.map(toResultShape);
+      // Best tier first (nulls/unranked last), stable within tier
+      shaped.sort((a, b) => (a.tier ?? 99) - (b.tier ?? 99));
+      return shaped.slice(0, READ_MORE_TOTAL);
     }
   } catch (err) {
     console.error(`Whitelist search failed for "${query}":`, err.message);
@@ -170,13 +192,13 @@ async function searchWhitelist(query, resultsPerGroup = 10) {
 async function extractArticleText(url, fallbackSnippet) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); 
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; VeritasBot/0.1)" },
       signal: controller.signal,
     });
-    
+
     clearTimeout(timeoutId);
 
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
@@ -190,7 +212,7 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 3000); 
+    return article.textContent.trim().slice(0, 3000);
   } catch (err) {
     return fallbackSnippet || "";
   }
@@ -222,6 +244,8 @@ async function retrieveSources(query, mode, debias = false) {
       searchWhitelist(strategy.query_opposing)
     ]);
 
+    // Each side is already tier-sorted internally (best first); interleave
+    // so both perspectives are represented rather than one side dominating.
     const combined = [];
     const maxLen = Math.max(resultsA.length, resultsB.length);
     for (let i = 0; i < maxLen; i++) {
@@ -259,6 +283,8 @@ async function retrieveSources(query, mode, debias = false) {
       title: r.title,
       link: r.link,
       text,
+      tier: r.tier,
+      tierLabel: r.tierLabel,
     };
   });
 
@@ -268,9 +294,11 @@ async function retrieveSources(query, mode, debias = false) {
     title: r.title,
     link: r.link,
     snippet: r.snippet,
+    tier: r.tier,
+    tierLabel: r.tierLabel,
   }));
 
   return { aiSources, moreSources, searchStrategy };
 }
 
-module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted };
+module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted, getDomainMeta };
