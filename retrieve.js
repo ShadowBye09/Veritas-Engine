@@ -274,11 +274,29 @@ async function retrieveSources(query, mode, debias = false) {
     return { aiSources: [], moreSources: [], searchStrategy };
   }
 
-  const forAI = results.slice(0, NUM_SOURCES);
-  const extras = results.slice(NUM_SOURCES);
+  // --- NEW UNDERDOG LOGIC ---
+  // Separate Tier 1 (Establishment) and Tier 2/3 (Underdogs)
+  const tier1Results = results.filter(r => r.tier === 1);
+  const underdogResults = results.filter(r => r.tier > 1 || r.tier === null);
+
+  // We want up to 6 total sources, but we want to GUARANTEE at least 2 slots for underdogs if they exist.
+  const numUnderdogsToKeep = Math.min(2, underdogResults.length);
+  const numTier1ToKeep = NUM_SOURCES - numUnderdogsToKeep;
+
+  const forAI = [
+    ...tier1Results.slice(0, numTier1ToKeep),
+    ...underdogResults.slice(0, numUnderdogsToKeep)
+  ];
+  
+  // The rest go to the 'Read More' drawer
+  const extras = [
+    ...tier1Results.slice(numTier1ToKeep),
+    ...underdogResults.slice(numUnderdogsToKeep)
+  ];
+  // --------------------------
 
   console.log(
-    `  [Scraper] Extracting full text for ${forAI.length} AI source(s)...`
+    `  [Scraper] Extracting full text for ${forAI.length} AI source(s) (including ${numUnderdogsToKeep} underdogs)...`
   );
 
   const scrapePromises = forAI.map(async (r, i) => {
