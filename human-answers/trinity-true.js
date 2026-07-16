@@ -1,5 +1,5 @@
 {
-  "slug": "climate-change-caused-by-humans",
+  "slug": "trinty-true",
   "question": "Is the trinity true?",
   "aliases": [
     "is jesus god",
