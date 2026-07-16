@@ -80,10 +80,17 @@ async function searchWhitelist(query) {
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
+    // Create an AbortController to strictly enforce a fast 3-second timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); 
+
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; VeritasBot/0.1)" },
-      timeout: 10000,
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId); // Clear timeout if it fetched in time
+
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
 
     const html = await res.text();
@@ -95,31 +102,40 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 6000);
+    return article.textContent.trim().slice(0, 4000); // Shorter slice speeds up LLM processing too!
   } catch (err) {
-    console.warn(`  [extract fallback] ${url} -> ${err.message}`);
+    console.warn(`  [extract fallback] ${url} -> ${err.name === 'AbortError' ? 'Timeout' : err.message}`);
     return fallbackSnippet || "";
   }
 }
 
 /**
- * Full retrieval step: search + extract for every result.
+ * Full retrieval step: search + extract for every result IN PARALLEL.
  * Returns [{ index, title, link, text }]
  */
 async function retrieveSources(query) {
   const results = await searchWhitelist(query);
 
-  const sources = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
+  if (!results || results.length === 0) {
+    return [];
+  }
+
+  console.log(`  [Scraper] Launching parallel extraction for ${results.length} sources...`);
+
+  // Fire off all scraping/extraction requests simultaneously!
+  const scrapePromises = results.map(async (r) => {
     const text = await extractArticleText(r.link, r.snippet);
-    sources.push({
-      index: i + 1,
+    return {
+      index: r.index,
       title: r.title,
       link: r.link,
-      text,
-    });
-  }
+      text: text,
+    };
+  });
+
+  // Wait for all of them to resolve (or fail gracefully with their fallbacks)
+  const sources = await Promise.all(scrapePromises);
+
   return sources;
 }
 
