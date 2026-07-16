@@ -43,6 +43,22 @@ function loadHumanAnswers() {
   console.log(
     `[humanAnswers] Loaded ${answerIndex.length} human-written answer(s).`
   );
+  answerIndex.forEach((entry) => {
+    console.log(`  - ${entry.filename}: "${entry.data.question}" (+ ${(entry.data.aliases || []).length} alias(es))`);
+  });
+}
+
+/**
+ * Returns the raw list of loaded answers with their filenames -- useful for
+ * a debug endpoint or CLI check to confirm what's actually loaded and what
+ * phrasings will match, without guessing.
+ */
+function listLoadedAnswers() {
+  return answerIndex.map((entry) => ({
+    filename: entry.filename,
+    question: entry.data.question,
+    aliases: entry.data.aliases || [],
+  }));
 }
 
 /**
@@ -71,4 +87,4 @@ function findHumanAnswer(question) {
 // Load once at startup.
 loadHumanAnswers();
 
-module.exports = { findHumanAnswer, loadHumanAnswers };
+module.exports = { findHumanAnswer, loadHumanAnswers, listLoadedAnswers };
