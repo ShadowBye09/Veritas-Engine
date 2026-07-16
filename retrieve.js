@@ -8,25 +8,13 @@ const { Readability } = require("@mozilla/readability");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
 /**
- * Serper wraps real Google search results, so standard Google search
- * operators work -- including OR'd site: filters.
+ * Run one Serper search and return raw organic results.
  */
-function buildWhitelistQuery(query) {
-  const siteFilters = WHITELIST_DOMAINS.map((d) => `site:${d}`).join(" OR ");
-  return `${query} (${siteFilters})`;
-}
-
-/**
- * Search via Serper.dev, restricted to whitelist domains.
- * Returns [{ title, link, snippet }]
- */
-async function searchWhitelist(query) {
+async function runSerperQuery(q, num) {
   const key = process.env.SERPER_API_KEY;
   if (!key) {
     throw new Error("Missing SERPER_API_KEY in environment");
   }
-
-  const fullQuery = buildWhitelistQuery(query);
 
   const res = await fetch("https://google.serper.dev/search", {
     method: "POST",
@@ -34,10 +22,7 @@ async function searchWhitelist(query) {
       "X-API-KEY": key,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      q: fullQuery,
-      num: READ_MORE_TOTAL,
-    }),
+    body: JSON.stringify({ q, num }),
   });
 
   if (!res.ok) {
@@ -46,31 +31,78 @@ async function searchWhitelist(query) {
   }
 
   const data = await res.json();
-  const results = data.organic || [];
+  return data.organic || [];
+}
 
-  if (results.length === 0) {
-    return [];
+function isWhitelisted(link) {
+  try {
+    const hostname = new URL(link).hostname.replace(/^www\./, "");
+    return WHITELIST_DOMAINS.some(
+      (d) => hostname === d || hostname.endsWith(`.${d}`)
+    );
+  } catch {
+    return false;
   }
+}
 
-  // Belt-and-suspenders: verify each result's hostname is actually on our
-  // whitelist before trusting it -- OR'd site: filters can occasionally
-  // let unrelated results slip through.
-  const filtered = results.filter((r) => {
-    try {
-      const hostname = new URL(r.link).hostname.replace(/^www\./, "");
-      return WHITELIST_DOMAINS.some(
-        (d) => hostname === d || hostname.endsWith(`.${d}`)
-      );
-    } catch {
-      return false;
-    }
-  });
-
-  return filtered.map((item) => ({
+function toResultShape(item) {
+  return {
     title: item.title,
     link: item.link,
     snippet: item.snippet || "",
-  }));
+  };
+}
+
+/**
+ * Search restricted to your whitelist.
+ *
+ * Serper's free/trial tier rejects overly complex query patterns -- a
+ * single query with 15+ OR'd site: filters chained together triggers
+ * "Query pattern not allowed for free accounts." So instead:
+ *
+ * 1. Run one plain query (no site: filters at all) -- cheap, always
+ *    allowed, and filter the results down to whitelist domains only.
+ * 2. If that doesn't yield enough results, fall back to individual
+ *    "question site:domain.com" queries per whitelist domain, run in
+ *    parallel, and merge/dedupe. This costs more API credits (one call
+ *    per domain) but only runs when the plain search comes up short.
+ *
+ * Returns [{ title, link, snippet }]
+ */
+async function searchWhitelist(query) {
+  const plainResults = await runSerperQuery(query, READ_MORE_TOTAL);
+  const filtered = plainResults.filter((r) => isWhitelisted(r.link));
+
+  if (filtered.length >= NUM_SOURCES) {
+    return filtered.map(toResultShape);
+  }
+
+  console.log(
+    `  [Search] Plain query only found ${filtered.length} whitelisted result(s) -- falling back to per-domain search...`
+  );
+
+  const perDomainPromises = WHITELIST_DOMAINS.map(async (domain) => {
+    try {
+      const results = await runSerperQuery(`${query} site:${domain}`, 2);
+      return results.filter((r) => isWhitelisted(r.link));
+    } catch (err) {
+      console.warn(`  [Search fallback] ${domain} -> ${err.message}`);
+      return [];
+    }
+  });
+
+  const perDomainResults = (await Promise.all(perDomainPromises)).flat();
+
+  // Merge, dedupe by link, prioritizing whatever the plain search already found.
+  const merged = [...filtered, ...perDomainResults];
+  const seen = new Set();
+  const deduped = merged.filter((r) => {
+    if (seen.has(r.link)) return false;
+    seen.add(r.link);
+    return true;
+  });
+
+  return deduped.slice(0, READ_MORE_TOTAL).map(toResultShape);
 }
 
 /**
