@@ -2,7 +2,6 @@
 // Talks to your Render-hosted backend's POST /ask endpoint and renders
 // the result using the templates in index.html.
 
-// Change this to your actual Render URL once deployed.
 const API_URL = "https://veritas-engine-8jlh.onrender.com/ask";
 const MORE_SOURCES_URL = "https://veritas-engine-8jlh.onrender.com/more-sources";
 
@@ -11,8 +10,9 @@ const searchBtn = document.getElementById("searchBtn");
 const resultArea = document.getElementById("resultArea");
 const modeToggle = document.getElementById("modeToggle");
 const themeToggle = document.getElementById("themeToggle");
+const debiasToggle = document.getElementById("debiasToggle");
 
-// --- Persistent kid/adult mode, stored across visits ---
+// --- Persistent kid/adult mode ---
 let currentMode = localStorage.getItem("veritas_mode") || "kid";
 
 function applyModeUI() {
@@ -44,6 +44,15 @@ themeToggle.addEventListener("click", () => {
   applyThemeUI();
 });
 
+// --- Persistent de-bias engine selection ---
+let currentDebias = localStorage.getItem("veritas_debias") === "true";
+debiasToggle.checked = currentDebias;
+
+debiasToggle.addEventListener("change", () => {
+  currentDebias = debiasToggle.checked;
+  localStorage.setItem("veritas_debias", currentDebias);
+});
+
 // --- Search handling ---
 searchBtn.addEventListener("click", runSearch);
 questionInput.addEventListener("keydown", (e) => {
@@ -54,16 +63,18 @@ async function runSearch() {
   const question = questionInput.value.trim();
   if (!question) return;
 
-  // Stop any answer currently being read aloud from a previous search.
   window.speechSynthesis.cancel();
-
   showLoading();
 
   try {
     const res = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, mode: currentMode }),
+      body: JSON.stringify({ 
+        question, 
+        mode: currentMode,
+        debias: currentDebias // Forward toggle switch option
+      }),
     });
 
     if (!res.ok) {
@@ -115,7 +126,6 @@ function showResult(question, data) {
 
   const isHuman = data.tier === "human";
 
-  // Toggle which badge/notes show depending on which trust tier answered.
   node.querySelectorAll(".ai-only").forEach((el) => {
     el.style.display = isHuman ? "none" : "";
   });
@@ -134,10 +144,6 @@ function showResult(question, data) {
     sourcesList.appendChild(buildSourceLink(s));
   });
 
-  // --- Read more ---
-  // AI-tier answers already have moreSources from the initial response.
-  // Human-tier answers load instantly with zero extra API calls, so their
-  // "read more" click triggers the search in the background at that point.
   const readMoreBtn = node.querySelector(".read-more-btn");
   const moreSourcesList = node.querySelector(".more-sources-list");
 
@@ -219,7 +225,6 @@ function showResult(question, data) {
     });
   }
 
-  // --- Listen: read the answer aloud using the browser's built-in TTS ---
   const listenBtn = node.querySelector(".listen-btn");
   const listenLabel = node.querySelector(".listen-label");
   listenBtn.addEventListener("click", () => {
@@ -246,9 +251,16 @@ function buildSourceLink(s) {
   a.href = s.link;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
-  const span = document.createElement("span");
-  span.className = "source-title";
-  span.textContent = s.title || s.link;
-  a.appendChild(span);
+  
+  const spanTitle = document.createElement("span");
+  spanTitle.className = "source-title";
+  spanTitle.textContent = s.title || s.link;
+  a.appendChild(spanTitle);
+
+  const spanUrl = document.createElement("span");
+  spanUrl.className = "source-url";
+  spanUrl.textContent = s.link;
+  a.appendChild(spanUrl);
+
   return a;
 }
