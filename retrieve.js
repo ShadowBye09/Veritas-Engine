@@ -5,22 +5,10 @@
 const fetch = require("node-fetch");
 const { JSDOM } = require("jsdom");
 const { Readability } = require("@mozilla/readability");
-const OpenAI = require("openai"); // Ensure OpenAI is imported!
+const OpenAI = require("openai"); 
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
-// Initialize OpenAI client
 const openai = new OpenAI();
-
-const CONTESTED_KEYWORDS = [
-  "god", "trinity", "jesus god", "free will", "creationism",
-  "afterlife", "existential", "string theory", "abortion", "capitalism",
-  "fake", "conspiracy", "hoax", "staged", "climate change"
-];
-
-function isContestedQuery(query) {
-  const normalized = query.toLowerCase();
-  return CONTESTED_KEYWORDS.some(keyword => normalized.includes(keyword));
-}
 
 /**
  * Run one Serper search and return raw organic results.
@@ -70,7 +58,7 @@ function toResultShape(item) {
 
 /**
  * STRIPS BIAS & DE-BIASED ENGINE: Rewrites highly biased or leading questions
- * into two structurally balanced, objective search terms.
+ * into TWO structurally balanced, objective search terms.
  */
 async function generateDeBiasedQueries(rawQuestion) {
   const systemPrompt = `You are an elite search query de-biasing engine.
@@ -109,11 +97,9 @@ Respond ONLY with a valid JSON object of this exact shape:
 /**
  * Highly optimized, ultra-fast whitelist search.
  * Grabs the top 40 Google results in a single roundtrip, then filters them.
- * This guarantees speed and eliminates multiple parallel Serper queries.
  */
 async function searchWhitelist(query) {
   try {
-    // Request 40 results to maximize whitelisted hits in ONE fast call
     const plainResults = await runSerperQuery(query, 40);
     const filtered = plainResults.filter((r) => isWhitelisted(r.link));
 
@@ -127,12 +113,12 @@ async function searchWhitelist(query) {
 }
 
 /**
- * Fetch a URL and extract clean article text with strict timeout.
+ * Fetch a URL and extract clean article text.
  */
 async function extractArticleText(url, fallbackSnippet) {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // Tightened to 2 seconds for speed
+    const timeoutId = setTimeout(() => controller.abort(), 2000); 
 
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; VeritasBot/0.1)" },
@@ -152,24 +138,23 @@ async function extractArticleText(url, fallbackSnippet) {
       throw new Error("extraction too short / failed");
     }
 
-    return article.textContent.trim().slice(0, 3000); // Sliced to 3000 chars to decrease LLM payload latency
+    return article.textContent.trim().slice(0, 3000); 
   } catch (err) {
     return fallbackSnippet || "";
   }
 }
 
 /**
- * Full retrieval step. Generates clean, dual-perspective queries, searches
- * them in parallel, and interleaves the results to ensure perfect balance.
+ * Full retrieval step. Generates clean, dual-perspective queries ONLY when debias is requested.
  */
-async function retrieveSources(query, mode) {
+async function retrieveSources(query, mode, debias = false) {
   let results = [];
   let searchStrategy = { isContested: false, queryA: "", queryB: "" };
 
-  if (mode === "contested" || isContestedQuery(query)) {
-    console.log(`[Retrieve] Detected contested topic. Rewriting queries neutrally...`);
+  // Only split the search if the user explicitly has debias enabled
+  if (debias === true || debias === "true") {
+    console.log(`[Retrieve] De-bias requested. Rewriting queries neutrally...`);
 
-    // 1. Rewrite queries using the AI de-biasing assistant
     const strategy = await generateDeBiasedQueries(query);
     console.log(`   -> Side A query: "${strategy.query_supporting}"`);
     console.log(`   -> Side B query: "${strategy.query_opposing}"`);
@@ -180,13 +165,11 @@ async function retrieveSources(query, mode) {
       queryB: strategy.query_opposing
     };
 
-    // 2. Fetch both sides in parallel
     const [resultsA, resultsB] = await Promise.all([
       searchWhitelist(strategy.query_supporting),
       searchWhitelist(strategy.query_opposing)
     ]);
 
-    // Interleave the results perfectly (A1, B1, A2, B2...) to guarantee balance
     const combined = [];
     const maxLen = Math.max(resultsA.length, resultsB.length);
     for (let i = 0; i < maxLen; i++) {
@@ -194,7 +177,6 @@ async function retrieveSources(query, mode) {
       if (resultsB[i]) combined.push(resultsB[i]);
     }
 
-    // Deduplicate any overlapping links
     const seen = new Set();
     results = combined.filter((r) => {
       if (seen.has(r.link)) return false;
@@ -203,6 +185,7 @@ async function retrieveSources(query, mode) {
     });
   } else {
     // Normal single-sided search
+    console.log(`[Retrieve] De-bias disabled. Running direct search...`);
     results = await searchWhitelist(query);
   }
 
@@ -210,7 +193,6 @@ async function retrieveSources(query, mode) {
     return { aiSources: [], moreSources: [], searchStrategy };
   }
 
-  // Segment sources for AI reading and UI "read more" links
   const forAI = results.slice(0, NUM_SOURCES);
   const extras = results.slice(NUM_SOURCES);
 
@@ -239,4 +221,4 @@ async function retrieveSources(query, mode) {
   return { aiSources, moreSources, searchStrategy };
 }
 
-module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted, isContestedQuery };
+module.exports = { searchWhitelist, extractArticleText, retrieveSources, isWhitelisted };
