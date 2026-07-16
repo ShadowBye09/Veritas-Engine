@@ -144,6 +144,7 @@ function showResult(question, data) {
 
   const isHuman = data.tier === "human";
 
+  // Hide/show logic for human vs AI
   node.querySelectorAll(".ai-only").forEach((el) => {
     el.style.display = isHuman ? "none" : "";
   });
@@ -151,22 +152,97 @@ function showResult(question, data) {
     el.style.display = isHuman ? "" : "none";
   });
 
-  node.querySelector(".question-title").textContent = question;
+  // Basic info
+  node.querySelector(".question-title").textContent = data.claim_title || question;
+  node.querySelector(".disagreement-text").textContent = data.disagreement || "No disagreement found.";
 
-  // --- Freshness + volatility badges (AI tier only) ---
-  const freshnessBadge = node.querySelector(".freshness-badge");
-  const volatilityBadge = node.querySelector(".volatility-badge");
-  if (!isHuman) {
-    freshnessBadge.style.display = "";
-    freshnessBadge.textContent = data.cached ? "from shared cache" : "freshly checked";
+  if (isHuman) {
+    node.querySelector(".answer-text").textContent = data.answer || "";
+  } else {
+    // --- Hitchhiker Dynamic Rendering ---
+    
+    // 1. Don't Panic Header
+    if (data.dont_panic_tip) {
+      node.querySelector(".dont-panic-tip").textContent = data.dont_panic_tip;
+    }
 
-    if (data.volatility) {
-      volatilityBadge.style.display = "";
-      volatilityBadge.textContent = VOLATILITY_LABELS[data.volatility] || data.volatility.toLowerCase();
+    // 2. Argument Sandbox (Pillars)
+    if (data.sides && data.sides.length >= 2) {
+      node.querySelector("#sideAName").textContent = data.sides[0].side_name;
+      node.querySelector("#sideBName").textContent = data.sides[1].side_name;
+
+      const sideAPillars = node.querySelector("#sideAPillars");
+      const sideBPillars = node.querySelector("#sideBPillars");
+
+      const renderPillars = (pillars, container) => {
+        pillars.forEach(p => {
+          const card = document.createElement("div");
+          card.className = "pillar-card";
+          card.setAttribute("data-weight", p.academic_weight || "weak");
+          
+          card.innerHTML = `
+            <div class="pillar-title">${p.title}</div>
+            <div class="pillar-explanation">
+              ${p.explanation}
+              <div class="pillar-source-marker">Source [${p.source_marker}]</div>
+            </div>
+          `;
+          
+          // Click to expand interaction
+          card.addEventListener("click", () => card.classList.toggle("expanded"));
+          container.appendChild(card);
+        });
+      };
+
+      renderPillars(data.sides[0].pillars || [], sideAPillars);
+      renderPillars(data.sides[1].pillars || [], sideBPillars);
     } else {
-      volatilityBadge.style.display = "none";
+      // Fallback if AI messes up the schema
+      node.querySelector(".argument-sandbox").style.display = "none";
+    }
+
+    // 3. Underdog Card
+    const underdogCard = node.querySelector(".underdog-card");
+    if (data.underdog_scientist && data.underdog_scientist.name && data.underdog_scientist.name !== "None identified") {
+      underdogCard.style.display = "block";
+      node.querySelector(".underdog-name").textContent = data.underdog_scientist.name + ":";
+      node.querySelector(".underdog-breakthrough").textContent = data.underdog_scientist.breakthrough;
+    } else {
+      underdogCard.style.display = "none";
     }
   }
+
+  // --- Sources (Kept from original) ---
+  const sourcesList = node.querySelector(".sources-list");
+  (data.sources || []).forEach((s) => {
+    sourcesList.appendChild(buildSourceLink(s));
+  });
+
+  const readMoreBtn = node.querySelector(".read-more-btn");
+  const moreSourcesList = node.querySelector(".more-sources-list");
+
+  if ((data.moreSources || []).length > 0) {
+    const moreSources = data.moreSources;
+    readMoreBtn.style.display = "";
+    readMoreBtn.textContent = `read more from verified sources (${moreSources.length}) ↓`;
+    readMoreBtn.addEventListener("click", () => {
+      const opening = moreSourcesList.style.display === "none";
+      moreSourcesList.style.display = opening ? "flex" : "none";
+      readMoreBtn.textContent = opening
+        ? "hide extra sources ↑"
+        : `read more from verified sources (${moreSources.length}) ↓`;
+
+      if (opening && moreSourcesList.childElementCount === 0) {
+        moreSources.forEach((s) => {
+          const item = buildSourceLink(s);
+          moreSourcesList.appendChild(item);
+        });
+      }
+    });
+  }
+
+  resultArea.appendChild(node);
+}
 
   // --- Byline (human tier) ---
   const byline = node.querySelector(".byline");
