@@ -1,23 +1,26 @@
 // summarize.js
-// Step 3: feed the retrieved excerpts to an LLM with a hard grounding
-// constraint, get back a structured, cited answer.
+// Step 3: writes CONTEXT around an already-selected direct-answer snippet.
+// The model is no longer the primary factual answer -- directAnswer.js picks
+// a verbatim, cited snippet for that job. This keeps the model's task to
+// what LLMs are actually good at: connecting ideas and explaining nuance,
+// not being the record of fact.
 
 const OpenAI = require("openai");
 const { SYSTEM_PROMPT } = require("./config");
 
-// This automatically pulls process.env.OPENAI_API_KEY
 const client = new OpenAI();
 
 /**
- * @param {string} question - the user's original question
- * @param {Array} sources - [{ index, title, link, text, tier, tierLabel }] from retrieve.js
+ * @param {string} question
+ * @param {Array} sources - [{ index, title, link, text, tier, tierLabel }]
  * @param {"kid"|"adult"|"contested"} mode
+ * @param {object|null} directAnswer - the snippet already shown to the user,
+ *   from directAnswer.js -- passed in so the model doesn't just repeat it.
  */
-async function summarize(question, sources, mode = "adult") {
+async function summarize(question, sources, mode = "adult", directAnswer = null) {
   if (!sources || sources.length === 0) {
     return {
-      answer:
-        "The approved sources don't have enough information to answer this.",
+      context: "",
       disagreement: "No sources were found to evaluate.",
       confidence: "low",
       evidenceNotes: [],
@@ -32,14 +35,14 @@ async function summarize(question, sources, mode = "adult") {
     )
     .join("\n---\n");
 
-  const userMessage = `User question: ${question}\n\nExcerpts:\n${excerptsBlock}`;
+  const directAnswerBlock = directAnswer
+    ? `The user has ALREADY been shown this direct-answer snippet (source [${directAnswer.sourceIndex}]): "${directAnswer.text}"\nDo not repeat this -- add what comes next.\n\n`
+    : "";
+
+  const userMessage = `User question: ${question}\n\n${directAnswerBlock}Excerpts:\n${excerptsBlock}`;
 
   const response = await client.chat.completions.create({
-    // Full model, not mini -- this is the grounded-synthesis step where
-    // instruction-following on "don't speculate, stay in the excerpts"
-    // actually matters. The cheap de-bias query rewrite in retrieve.js
-    // stays on mini since that's a much easier task.
-    model: "gpt-4o-mini",
+    model: "gpt-4o",
     max_tokens: 1400,
     response_format: {
       type: "json_schema",
@@ -51,8 +54,6 @@ async function summarize(question, sources, mode = "adult") {
           properties: {
             evidenceNotes: {
               type: "array",
-              description:
-                "One entry per excerpt, filled BEFORE the answer. Pure extraction: what does this specific excerpt support, and at what trust tier.",
               items: {
                 type: "object",
                 properties: {
@@ -64,7 +65,7 @@ async function summarize(question, sources, mode = "adult") {
                 additionalProperties: false
               }
             },
-            answer: { type: "string" },
+            context: { type: "string" },
             disagreement: { type: "string" },
             confidence: { type: "string", enum: ["high", "medium", "low"] },
             citations: {
@@ -80,7 +81,7 @@ async function summarize(question, sources, mode = "adult") {
               }
             }
           },
-          required: ["evidenceNotes", "answer", "disagreement", "confidence", "citations"],
+          required: ["evidenceNotes", "context", "disagreement", "confidence", "citations"],
           additionalProperties: false
         }
       }
@@ -98,7 +99,7 @@ async function summarize(question, sources, mode = "adult") {
     parsed = JSON.parse(raw);
   } catch (err) {
     parsed = {
-      answer: raw,
+      context: raw,
       disagreement: "(unparsed model output -- check formatting)",
       confidence: "low",
       evidenceNotes: [],
@@ -106,8 +107,6 @@ async function summarize(question, sources, mode = "adult") {
     };
   }
 
-  // Preserve sources array structure for the final output, tier included
-  // so the frontend can show a trust badge per source if you want later.
   parsed.sources = sources.map((s) => ({
     index: s.index,
     title: s.title,
