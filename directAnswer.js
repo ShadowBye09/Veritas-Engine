@@ -32,13 +32,16 @@ function cosineSimilarity(a, b) {
 /**
  * Split scraped article text into paragraph-ish chunks worth considering as
  * a standalone answer. Very short fragments (nav text, captions leftover
- * from extraction) are filtered out.
+ * from extraction) are filtered out, as are any that still carry Google's
+ * own truncation marker ("...") -- those read as broken sentence fragments
+ * when quoted verbatim and should never be shown as a headline direct answer.
  */
 function splitIntoCandidates(text) {
   return text
     .split(/\n+/)
     .map((p) => p.trim())
-    .filter((p) => p.length >= 60 && p.length <= 800);
+    .filter((p) => p.length >= 60 && p.length <= 800)
+    .filter((p) => !p.includes("...") && !p.includes("…"));
 }
 
 function trimToSnippetLength(text) {
@@ -50,14 +53,22 @@ function trimToSnippetLength(text) {
 
 /**
  * @param {string} question
- * @param {Array} aiSources - [{ index, title, link, text, tier, tierLabel }]
+ * @param {Array} aiSources - [{ index, title, link, text, extracted, tier, tierLabel }]
  * @returns {Promise<object|null>} the selected snippet + its source, or null
- *   if no usable candidate paragraphs were found (e.g. all sources failed
- *   extraction and only have short snippet fallbacks).
+ *   if no usable candidate paragraphs were found -- e.g. every source failed
+ *   real extraction and only has a truncated snippet fallback. In that case
+ *   the frontend's existing "no direct answer" path handles it gracefully:
+ *   the AI-written context becomes the primary answer instead of a caption.
  */
 async function selectDirectAnswer(question, aiSources) {
   const candidates = [];
   for (const source of aiSources) {
+    // Snippet-fallback sources (extracted === false) are real Google
+    // search-result text, often mid-sentence truncated -- fine to inform
+    // the AI's context/evidenceNotes pass, but never safe to quote verbatim
+    // as if it were a complete, standalone answer.
+    if (source.extracted === false) continue;
+
     const paras = splitIntoCandidates(source.text || "").slice(0, 6);
     for (const text of paras) {
       candidates.push({ text, source });
