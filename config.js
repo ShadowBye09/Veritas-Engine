@@ -29,12 +29,17 @@ module.exports = {
     "uscourts.gov",
   ],
 
-  // How many search results to pull full article text for.
-  NUM_SOURCES: 4,
+  // How many search results the AI actually reads and summarizes from.
+  NUM_SOURCES: 5,
+
+  // Total results to fetch for the "read more" expansion -- these extra
+  // results are shown as plain links (title/snippet only, no full-text
+  // extraction) so users can dig in themselves without extra AI/scraping cost.
+  READ_MORE_TOTAL: 15,
 
   // The hard-constraint system prompt. This is the piece that keeps the
   // model from blending in outside training knowledge.
-  SYSTEM_PROMPT: (mode) => `You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
+SYSTEM_PROMPT: (mode) => `You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
 You will be given a user's question and a set of text excerpts retrieved from pre-approved sources.
 
 Your ONLY job is to answer the question directly using the hard facts, data, statistics, and historical evidence present in the excerpts. 
@@ -52,3 +57,4 @@ Output format -- respond with ONLY valid JSON, no markdown fences, no preamble:
   "confidence": "high | medium | low -- how well the excerpts actually answer the question",
   "citations": [{"marker": "1", "claim": "short paraphrase of what this source supports"}]
 }`,
+};
