@@ -69,32 +69,44 @@ function toResultShape(item) {
  *
  * Returns [{ title, link, snippet }]
  */
+// A simple helper to split our big list of websites into small groups
+function chunkArray(array, size) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
 async function searchWhitelist(query) {
+  // 1. Try a normal search first
   const plainResults = await runSerperQuery(query, READ_MORE_TOTAL);
   const filtered = plainResults.filter((r) => isWhitelisted(r.link));
 
+  // If we found enough trusted links right away, just use them!
   if (filtered.length >= NUM_SOURCES) {
     return filtered.map(toResultShape);
   }
 
-  console.log(
-    `  [Search] Plain query only found ${filtered.length} whitelisted result(s) -- falling back to per-domain search...`
-  );
-
-  const perDomainPromises = WHITELIST_DOMAINS.map(async (domain) => {
+  // 2. If not, search our whitelisted sites in small groups of 5
+  const domainChunks = chunkArray(WHITELIST_DOMAINS, 5);
+  const batchPromises = domainChunks.map(async (chunk) => {
     try {
-      const results = await runSerperQuery(`${query} site:${domain}`, 2);
+      // This creates a search query like: "global warming site:nasa.gov OR site:noaa.gov"
+      const siteFilter = chunk.map(domain => `site:${domain}`).join(" OR ");
+      const combinedQuery = `${query} (${siteFilter})`;
+      
+      const results = await runSerperQuery(combinedQuery, 3);
       return results.filter((r) => isWhitelisted(r.link));
     } catch (err) {
-      console.warn(`  [Search fallback] ${domain} -> ${err.message}`);
-      return [];
+      return []; // If one group fails, keep going quietly
     }
   });
 
-  const perDomainResults = (await Promise.all(perDomainPromises)).flat();
+  const batchResults = (await Promise.all(batchPromises)).flat();
 
-  // Merge, dedupe by link, prioritizing whatever the plain search already found.
-  const merged = [...filtered, ...perDomainResults];
+  // Combine, remove duplicates, and return the top links
+  const merged = [...filtered, ...batchResults];
   const seen = new Set();
   const deduped = merged.filter((r) => {
     if (seen.has(r.link)) return false;
