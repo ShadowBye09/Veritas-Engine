@@ -97,6 +97,19 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+const { reloadHumanAnswers } = require("./humanAnswers");
+
+app.post("/admin/reload-answers", (req, res) => {
+  // A simple password to make sure random people can't trigger this
+  const token = req.headers["x-admin-token"];
+  if (token !== "my_secret_password") {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const count = reloadHumanAnswers();
+  return res.json({ success: true, message: `Reloaded! Now holding ${count} answers.` });
+});
+
 /**
  * POST /more-sources
  * body: { "question": "...", "excludeLinks": ["https://...", ...] }
