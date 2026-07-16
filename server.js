@@ -1,12 +1,5 @@
 // server.js
-// Wraps the retrieve -> summarize -> cache pipeline as a live HTTP API,
-// so Bubble (or any frontend) can call it over the internet.
-//
-// Run locally:  node server.js
-// Deploy: push this whole folder to Render as a Web Service.
-//   Build command: npm install
-//   Start command:  node server.js
-//   Env vars to set in Render's dashboard: OPENAI_API_KEY, SERPER_API_KEY
+// Wraps the retrieve -> summarize -> cache pipeline as a live HTTP API.
 
 require("dotenv").config();
 const express = require("express");
@@ -14,33 +7,30 @@ const cors = require("cors");
 const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { getCachedResult, setCachedResult } = require("./cache");
-const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
+const { findHumanAnswer, reloadHumanAnswers, listLoadedAnswers } = require("./humanAnswers");
 
 const app = express();
-app.use(cors()); // allows Bubble's servers to call this API from a browser/backend workflow
+app.use(cors());
 app.use(express.json());
 
 const CACHE_TTL_HOURS = 48;
 
 /**
  * POST /ask
- * body: { "question": "is climate change caused by humans", "mode": "adult" }
- *
- * Returns the same shape ask.js prints, as JSON:
- * { answer, disagreement, confidence, citations, sources, cached }
+ * body: { "question": "...", "mode": "adult"|"kid"|"contested", "debias": true|false }
  */
 app.post("/ask", async (req, res) => {
-  const { question, mode } = req.body || {};
+  const { question, mode, debias } = req.body || {};
 
   if (!question || typeof question !== "string") {
     return res.status(400).json({ error: "Missing or invalid 'question' field" });
   }
-  const safeMode = mode === "kid" ? "kid" : "adult";
+  
+  const safeMode = ["kid", "adult", "contested"].includes(mode) ? mode : "adult";
+  const shouldDebias = !!debias;
 
   try {
-    // Tier 1: human-written, two-pass-verified answer. Checked first,
-    // always -- this is the highest-trust content on the site and should
-    // never be skipped in favor of a fresh AI call.
+    // Tier 1: Human Answers
     const humanAnswer = findHumanAnswer(question);
     if (humanAnswer) {
       return res.json({
@@ -58,14 +48,16 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    // Tier 2: cached AI answer from a previous identical question.
-    const cached = getCachedResult(question, safeMode, CACHE_TTL_HOURS);
+    // Tier 2: Cached Answers
+    // Modify cache key representation so debiased queries don't override standard queries
+    const cacheModeKey = `${safeMode}${shouldDebias ? "-debiased" : ""}`;
+    const cached = getCachedResult(question, cacheModeKey, CACHE_TTL_HOURS);
     if (cached) {
       return res.json({ tier: "ai", ...cached, cached: true });
     }
 
-    // Tier 3: fresh AI pipeline.
-    const { aiSources, moreSources } = await retrieveSources(question);
+    // Tier 3: Fresh AI Pipeline
+    const { aiSources, moreSources } = await retrieveSources(question, safeMode, shouldDebias);
 
     if (aiSources.length === 0) {
       return res.json({
@@ -80,9 +72,12 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    const result = await summarize(question, aiSources, safeMode);
+    // Use contested mode instructions if we successfully split query perspectives
+    const activeLLMMode = shouldDebias ? "contested" : safeMode;
+    const result = await summarize(question, aiSources, activeLLMMode);
     result.moreSources = moreSources;
-    setCachedResult(question, safeMode, result);
+    
+    setCachedResult(question, cacheModeKey, result);
 
     return res.json({ tier: "ai", ...result, cached: false });
   } catch (err) {
@@ -91,35 +86,10 @@ app.post("/ask", async (req, res) => {
   }
 });
 
-// Simple health check -- useful for confirming the server is alive after
-// deploying, and for Render's health checks if you configure one.
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-const { reloadHumanAnswers } = require("./humanAnswers");
-
-app.post("/admin/reload-answers", (req, res) => {
-  // A simple password to make sure random people can't trigger this
-  const token = req.headers["x-admin-token"];
-  if (token !== "my_secret_password") {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const count = reloadHumanAnswers();
-  return res.json({ success: true, message: `Reloaded! Now holding ${count} answers.` });
-});
-
-/**
- * POST /more-sources
- * body: { "question": "...", "excludeLinks": ["https://...", ...] }
- *
- * Runs ONLY the whitelist search -- no full-text extraction, no AI call.
- * This is what powers "read more" for human-written answers: the paper
- * itself loads instantly with zero API calls, and this endpoint only
- * fires when the user actually clicks to see more sources, searching
- * in the background at that point.
- */
 app.post("/more-sources", async (req, res) => {
   const { question, excludeLinks } = req.body || {};
 
@@ -138,14 +108,19 @@ app.post("/more-sources", async (req, res) => {
   }
 });
 
-/**
- * GET /debug/human-answers
- * Lists every loaded human-written answer's question + aliases, so you can
- * confirm a file actually loaded and see exactly what phrasing will match
- * it, instead of guessing why a match did or didn't happen.
- */
 app.get("/debug/human-answers", (req, res) => {
   res.json(listLoadedAnswers());
+});
+
+// Admin hot-reloader
+app.post("/admin/reload-answers", (req, res) => {
+  const token = req.headers["x-admin-token"];
+  if (token !== (process.env.ADMIN_TOKEN || "local_secret_code")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const count = reloadHumanAnswers();
+  return res.json({ success: true, message: `Successfully reloaded ${count} human answers.` });
 });
 
 const PORT = process.env.PORT || 3000;
