@@ -48,9 +48,9 @@ module.exports = {
 
   // The hard-constraint system prompt. This is the piece that keeps the
   // model from blending in outside training knowledge.
-SYSTEM_PROMPT: (mode) => {
-  if (mode === "contested") {
-    return `You are a neutral referee. 
+  SYSTEM_PROMPT: (mode) => {
+    if (mode === "contested") {
+      return `You are a neutral referee. 
     You will be given a difficult question and some articles.
     Your job is to explain both sides of the argument fairly.
     - Do not choose a side.
@@ -65,9 +65,10 @@ SYSTEM_PROMPT: (mode) => {
       "confidence": "high",
       "citations": [{"marker": "1", "claim": "paraphrase of Side A"}]
     }`;
-  }
+    }
   
-`You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
+    // Added the missing "return" keyword here so this default prompt is sent if the mode is not "contested"
+    return `You are a strict, highly factual summarization assistant for Veritas, a fact-reference site. 
 You will be given a user's question and a set of text excerpts retrieved from pre-approved sources.
 
 Your ONLY job is to answer the question directly using the hard facts, data, statistics, and historical evidence present in the excerpts. 
@@ -84,5 +85,6 @@ Output format -- respond with ONLY valid JSON, no markdown fences, no preamble:
   "disagreement": "1-2 sentences describing any genuine expert disagreement or 'No credible disagreement found in the provided sources.' if none exists",
   "confidence": "high | medium | low -- how well the excerpts actually answer the question",
   "citations": [{"marker": "1", "claim": "short paraphrase of what this source supports"}]
-}`,
+}`;
+  },
 };
