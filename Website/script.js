@@ -134,6 +134,16 @@ function showResult(question, data) {
   });
 
   node.querySelector(".question-title").textContent = question;
+
+  const strategyBanner = node.querySelector(".strategy-banner");
+  if (data.searchStrategy && data.searchStrategy.isContested) {
+    strategyBanner.style.display = "block";
+    node.querySelector(".query-a-text").textContent = data.searchStrategy.queryA || "";
+    node.querySelector(".query-b-text").textContent = data.searchStrategy.queryB || "";
+  } else if (strategyBanner) {
+    strategyBanner.style.display = "none";
+  }
+
   node.querySelector(".answer-text").textContent = data.answer || "";
   node.querySelector(".disagreement-text").textContent =
     data.disagreement || "No disagreement information available.";
