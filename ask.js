@@ -4,7 +4,6 @@ require("dotenv").config();
 const { retrieveSources } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { findHumanAnswer } = require("./humanAnswers");
-const { getCachedResult, setCachedResult } = require("./cache");
 
 async function main() {
   const question = process.argv[2];
@@ -31,43 +30,37 @@ async function main() {
     console.log(JSON.stringify(humanAnswer.sources, null, 2));
     return;
   }
-  console.log("No human-written match -- falling through to Cache / AI pipeline.\n");
+  console.log("No human-written match -- falling through to AI pipeline.\n");
 
-  // Tier 2: Check cached results
-  console.log("Checking cache...");
-  const cached = getCachedResult(question, mode);
-  if (cached) {
-    console.log("\n[CACHED ANSWER FOUND]\n");
-    console.log("ANSWER:");
-    console.log(cached.answer);
-    console.log("\nDISAGREEMENT:");
-    console.log(cached.disagreement);
-    console.log("\nCONFIDENCE:", cached.confidence);
-    console.log("\nCITATIONS:");
-    console.log(JSON.stringify(cached.citations, null, 2));
-    console.log("\nSOURCES:");
-    console.log(JSON.stringify(cached.sources, null, 2));
-    return;
-  }
-  console.log("❄️ [Cache Miss] Fetching fresh data...\n");
-
-  // Tier 3: Search whitelist
   console.log("Searching whitelist...");
-  const { aiSources, moreSources } = await retrieveSources(question, mode);
+  // Pass BOTH question and mode so retrieve.js receives the parameters correctly
+  const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, mode);
 
-  if (!aiSources || aiSources.length === 0) {
+  if (aiSources.length === 0) {
     console.log("No sources found in whitelist for this query.\n");
     return;
+  }
+
+  // Display de-biasing strategy to the user if activated
+  if (searchStrategy && searchStrategy.isContested) {
+    console.log(`\n=============================================================`);
+    console.log(`⚖️  [DE-BIASED ACTIVE] This topic was classified as contested!`);
+    console.log(`   We have split your search into balanced perspective queries:`);
+    console.log(`   -> Side A: "${searchStrategy.queryA}"`);
+    console.log(`   -> Side B: "${searchStrategy.queryB}"`);
+    console.log(`=============================================================\n`);
+  } else {
+    console.log(`\nℹ️  [DIRECT SEARCH] Topic is factual. Single search executed.\n`);
   }
 
   console.log(`Found ${aiSources.length} AI source(s), ${moreSources.length} extra "read more" link(s):`);
   aiSources.forEach((s) => console.log(`  [${s.index}] ${s.title} -- ${s.link}`));
 
   console.log("\nSummarizing with grounding constraint...\n");
-  const result = await summarize(question, aiSources, mode);
-
-  // Save successful summary response back to SQLite cache
-  setCachedResult(question, mode, result);
+  
+  // Use contested mode instructions if the query partition was triggered
+  const activeLLMMode = (searchStrategy && searchStrategy.isContested) ? "contested" : mode;
+  const result = await summarize(question, aiSources, activeLLMMode);
 
   console.log("ANSWER:");
   console.log(result.answer);
