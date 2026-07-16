@@ -14,6 +14,7 @@ const cors = require("cors");
 const { retrieveSources } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { getCachedResult, setCachedResult } = require("./cache");
+const { findHumanAnswer } = require("./humanAnswers");
 
 const app = express();
 app.use(cors()); // allows Bubble's servers to call this API from a browser/backend workflow
@@ -37,28 +38,53 @@ app.post("/ask", async (req, res) => {
   const safeMode = mode === "kid" ? "kid" : "adult";
 
   try {
-    const cached = getCachedResult(question, safeMode, CACHE_TTL_HOURS);
-    if (cached) {
-      return res.json({ ...cached, cached: true });
+    // Tier 1: human-written, two-pass-verified answer. Checked first,
+    // always -- this is the highest-trust content on the site and should
+    // never be skipped in favor of a fresh AI call.
+    const humanAnswer = findHumanAnswer(question);
+    if (humanAnswer) {
+      return res.json({
+        tier: "human",
+        answer: humanAnswer[safeMode === "kid" ? "answer_kid" : "answer_adult"],
+        disagreement: humanAnswer.disagreement,
+        confidence: "high",
+        citations: [],
+        sources: humanAnswer.sources,
+        moreSources: [],
+        author: humanAnswer.author,
+        reviewedBy: humanAnswer.reviewed_by,
+        lastUpdated: humanAnswer.last_updated,
+        cached: false,
+      });
     }
 
-    const sources = await retrieveSources(question);
+    // Tier 2: cached AI answer from a previous identical question.
+    const cached = getCachedResult(question, safeMode, CACHE_TTL_HOURS);
+    if (cached) {
+      return res.json({ tier: "ai", ...cached, cached: true });
+    }
 
-    if (sources.length === 0) {
+    // Tier 3: fresh AI pipeline.
+    const { aiSources, moreSources } = await retrieveSources(question);
+
+    if (aiSources.length === 0) {
       return res.json({
+        tier: "ai",
         answer: "The approved sources don't have enough information to answer this.",
         disagreement: "No sources were found to evaluate.",
         confidence: "low",
         citations: [],
         sources: [],
+        moreSources: [],
         cached: false,
       });
     }
 
-    const result = await summarize(question, sources, safeMode);
+    const result = await summarize(question, aiSources, safeMode);
+    result.moreSources = moreSources;
     setCachedResult(question, safeMode, result);
 
-    return res.json({ ...result, cached: false });
+    return res.json({ tier: "ai", ...result, cached: false });
   } catch (err) {
     console.error("Error in /ask:", err.message);
     return res.status(500).json({ error: "Something went wrong processing this question." });
