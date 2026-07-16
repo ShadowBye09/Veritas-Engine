@@ -11,10 +11,10 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { retrieveSources } = require("./retrieve");
+const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { getCachedResult, setCachedResult } = require("./cache");
-const { findHumanAnswer } = require("./humanAnswers");
+const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
 
 const app = express();
 app.use(cors()); // allows Bubble's servers to call this API from a browser/backend workflow
@@ -95,6 +95,44 @@ app.post("/ask", async (req, res) => {
 // deploying, and for Render's health checks if you configure one.
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
+});
+
+/**
+ * POST /more-sources
+ * body: { "question": "...", "excludeLinks": ["https://...", ...] }
+ *
+ * Runs ONLY the whitelist search -- no full-text extraction, no AI call.
+ * This is what powers "read more" for human-written answers: the paper
+ * itself loads instantly with zero API calls, and this endpoint only
+ * fires when the user actually clicks to see more sources, searching
+ * in the background at that point.
+ */
+app.post("/more-sources", async (req, res) => {
+  const { question, excludeLinks } = req.body || {};
+
+  if (!question || typeof question !== "string") {
+    return res.status(400).json({ error: "Missing or invalid 'question' field" });
+  }
+
+  try {
+    const results = await searchWhitelist(question);
+    const exclude = new Set(excludeLinks || []);
+    const filtered = results.filter((r) => !exclude.has(r.link));
+    return res.json({ moreSources: filtered });
+  } catch (err) {
+    console.error("Error in /more-sources:", err.message);
+    return res.status(500).json({ error: "Something went wrong fetching more sources." });
+  }
+});
+
+/**
+ * GET /debug/human-answers
+ * Lists every loaded human-written answer's question + aliases, so you can
+ * confirm a file actually loaded and see exactly what phrasing will match
+ * it, instead of guessing why a match did or didn't happen.
+ */
+app.get("/debug/human-answers", (req, res) => {
+  res.json(listLoadedAnswers());
 });
 
 const PORT = process.env.PORT || 3000;
