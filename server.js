@@ -3,14 +3,13 @@ const express = require("express");
 const cors = require("cors");
 const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
-const { getCachedResult, setCachedResult } = require("./cache");
+const { getCachedResult, setCachedResult, invalidateCachedResult } = require("./cache");
+const { classifyVolatility } = require("./volatility");
 const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-const CACHE_TTL_HOURS = 48;
 
 app.post("/ask", async (req, res) => {
   const { question, mode, debias } = req.body || {};
@@ -42,9 +41,15 @@ app.post("/ask", async (req, res) => {
     }
 
     const cacheModeKey = `${safeMode}${shouldDebias ? "-debiased" : ""}`;
-    const cached = getCachedResult(question, cacheModeKey, CACHE_TTL_HOURS);
+
+    // Classify (or recall) how fast this topic changes so stable facts get
+    // cached longer and fast-moving topics get re-checked sooner, instead of
+    // one flat TTL for every question sharing this cache.
+    const { tier: volatilityTier, ttlHours } = await classifyVolatility(question);
+
+    const cached = getCachedResult(question, cacheModeKey, ttlHours);
     if (cached) {
-      return res.json({ tier: "ai", ...cached, cached: true });
+      return res.json({ tier: "ai", ...cached, cached: true, volatility: volatilityTier });
     }
 
     const { aiSources, moreSources, searchStrategy } = await retrieveSources(question, safeMode, shouldDebias);
@@ -71,7 +76,7 @@ app.post("/ask", async (req, res) => {
     
     setCachedResult(question, cacheModeKey, result);
 
-    return res.json({ tier: "ai", ...result, cached: false });
+    return res.json({ tier: "ai", ...result, cached: false, volatility: volatilityTier });
   } catch (err) {
     console.error("Error in /ask:", err.message);
     return res.status(500).json({ error: "Something went wrong processing this question." });
@@ -102,6 +107,23 @@ app.post("/more-sources", async (req, res) => {
 
 app.get("/debug/human-answers", (req, res) => {
   res.json(listLoadedAnswers());
+});
+
+// Manual safety valve: since the cache is now shared across ALL users,
+// one stale/bad cached answer serves everyone until this is called or the
+// volatility TTL expires. Use this to force-expire a specific question
+// immediately after noticing something's wrong with it.
+app.post("/admin/invalidate-cache", (req, res) => {
+  const { question, mode } = req.body || {};
+  if (!question || typeof question !== "string") {
+    return res.status(400).json({ error: "Missing or invalid 'question' field" });
+  }
+  const modesToClear = mode ? [mode, `${mode}-debiased`] : ["kid", "adult", "kid-debiased", "adult-debiased"];
+  let cleared = 0;
+  for (const m of modesToClear) {
+    if (invalidateCachedResult(question, m)) cleared += 1;
+  }
+  res.json({ question, clearedEntries: cleared });
 });
 
 const PORT = process.env.PORT || 3000;
