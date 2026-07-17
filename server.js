@@ -7,6 +7,7 @@ const { selectDirectAnswer } = require("./directAnswer");
 const { getCachedResult, setCachedResult, invalidateCachedResult } = require("./cache");
 const { classifyVolatility } = require("./volatility");
 const { findHumanAnswer, listLoadedAnswers } = require("./humanAnswers");
+const { findEmergingResearch } = require("./research");
 
 const app = express();
 app.use(cors());
@@ -110,6 +111,23 @@ app.post("/more-sources", async (req, res) => {
   } catch (err) {
     console.error("Error in /more-sources:", err.message);
     return res.status(500).json({ error: "Something went wrong fetching more sources." });
+  }
+});
+
+// Emerging Research: fetched lazily (like /more-sources), not bundled into
+// /ask, since it hits a second external API and isn't needed for every
+// question -- only shown/expanded when the user opts into it.
+app.post("/emerging-research", async (req, res) => {
+  const { question } = req.body || {};
+  if (!question || typeof question !== "string") {
+    return res.status(400).json({ error: "Missing or invalid 'question' field" });
+  }
+  try {
+    const results = await findEmergingResearch(question);
+    return res.json({ results });
+  } catch (err) {
+    console.error("Error in /emerging-research:", err.message);
+    return res.status(500).json({ error: "Something went wrong fetching emerging research." });
   }
 });
 
