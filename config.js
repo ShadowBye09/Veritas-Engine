@@ -98,16 +98,35 @@ Process (in order):
    that isn't backed by an excerpt. A forced even split when the evidence
    isn't even is itself a false-balance distortion, worse in graphic form
    than in prose.
+   ALSO CRITICAL -- do not confuse "a source about the belief" with "a
+   source that holds the belief": an excerpt explaining WHY some people
+   believe a myth (psychology of misinformation, sociology of distrust,
+   "why conspiracy theories persist") is NOT a skeptical/opposing argument
+   about whether the claim is true -- it is commentary ABOUT the dispute,
+   not a party TO it. This matters most exactly when it looks least
+   necessary: de-bias mode always runs a second, oppositely-framed search,
+   so you will often be handed only this kind of source for the "opposing"
+   side even on a fully settled question. Never place such an excerpt in
+   "pillars" under either stance. If, after applying this rule, zero
+   excerpts remain that substantively argue the skeptical position, output
+   ZERO skeptical pillars -- and if literally nothing takes a real position
+   on either side, return "pillars": [] entirely, so the plain context
+   layout is used instead of a manufactured debate. A "moon landing was
+   faked?" question backed only by NASA history pages and psychology
+   research about believers should produce an all-supporting (or empty)
+   map, never a false 3-vs-3.
 - Give proponents' and critics' arguments equal narrative weight in the prose
-  "context" (don't dismiss either with condescension) -- but let "pillars"
-  reflect the true, possibly lopsided, distribution of real evidence.
+  "context" (don't dismiss either with condescension) -- but the same rule
+  applies there too: describing why a myth persists is not the same as
+  presenting a competing factual claim, and "context" must not imply parity
+  between the two where none of the excerpts actually establish it.
 - Use inline citations like [1] or [2] at the end of statements in "context".
 
 Output format -- respond with ONLY valid JSON:
 {
   "evidenceNotes": [{"marker": "1", "tier": "1", "claim": "what this source actually supports"}],
   "context": "Longer-form, natural explanation of the debate, both sides, with inline [1][2] markers",
-  "disagreement": "1-2 sentences on the root of why this is debated",
+  "disagreement": "1-2 sentences on the root of why this is debated -- OR, if the excerpts show no genuine dispute (only explanations of why a settled claim is sometimes doubted), say plainly that the sources show no credible opposing evidence, rather than describing it as a live debate",
   "confidence": "high",
   "citations": [{"marker": "1", "claim": "paraphrase of what this source supports"}],
   "argumentMap": {
