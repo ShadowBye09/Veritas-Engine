@@ -41,9 +41,81 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
 
   const userMessage = `User question: ${question}\n\n${directAnswerBlock}Excerpts:\n${excerptsBlock}`;
 
+  const isContested = mode === "contested";
+
+  const baseProperties = {
+    evidenceNotes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          marker: { type: "string" },
+          tier: { type: "string" },
+          claim: { type: "string" }
+        },
+        required: ["marker", "tier", "claim"],
+        additionalProperties: false
+      }
+    },
+    context: { type: "string" },
+    disagreement: { type: "string" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    citations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          marker: { type: "string" },
+          claim: { type: "string" }
+        },
+        required: ["marker", "claim"],
+        additionalProperties: false
+      }
+    }
+  };
+
+  const baseRequired = ["evidenceNotes", "context", "disagreement", "confidence", "citations"];
+
+  // Contested-only: structured argument map for the interactive visual.
+  // Pillar count/stance is left to the model -- NOT fixed at a 2-column
+  // split -- so a lopsided evidence base produces a lopsided map instead of
+  // manufactured false balance. Kept out of the schema entirely for
+  // non-contested questions so the model isn't nudged to invent a "debate"
+  // where none exists.
+  const schemaProperties = isContested
+    ? {
+        ...baseProperties,
+        argumentMap: {
+          type: "object",
+          properties: {
+            coreClaim: { type: "string" },
+            pillars: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  marker: { type: "string" },
+                  stance: { type: "string", enum: ["supporting", "skeptical"] },
+                  claim: { type: "string" },
+                  institution: { type: "string" },
+                  tier: { type: "string" }
+                },
+                required: ["marker", "stance", "claim", "institution", "tier"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["coreClaim", "pillars"],
+          additionalProperties: false
+        }
+      }
+    : baseProperties;
+
+  const schemaRequired = isContested ? [...baseRequired, "argumentMap"] : baseRequired;
+
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
-    max_tokens: 1400,
+    max_tokens: 1600,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -51,37 +123,8 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
         strict: true,
         schema: {
           type: "object",
-          properties: {
-            evidenceNotes: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  marker: { type: "string" },
-                  tier: { type: "string" },
-                  claim: { type: "string" }
-                },
-                required: ["marker", "tier", "claim"],
-                additionalProperties: false
-              }
-            },
-            context: { type: "string" },
-            disagreement: { type: "string" },
-            confidence: { type: "string", enum: ["high", "medium", "low"] },
-            citations: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  marker: { type: "string" },
-                  claim: { type: "string" }
-                },
-                required: ["marker", "claim"],
-                additionalProperties: false
-              }
-            }
-          },
-          required: ["evidenceNotes", "context", "disagreement", "confidence", "citations"],
+          properties: schemaProperties,
+          required: schemaRequired,
           additionalProperties: false
         }
       }
