@@ -28,7 +28,7 @@
   </header>
 
   <div class="search-row">
-    <input type="text" id="questionInput" placeholder="ask anything, like 'why is the sky blue'" />
+    <input type="text" id="questionInput" placeholder="ask anything -- yes, even 'why is the sky blue'" />
     <button id="searchBtn" aria-label="search">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -44,7 +44,7 @@
       </div>
       <div class="debias-switch-text">
         <span class="debias-title-text">De-Bias & Balance Search</span>
-        <span class="debias-desc-text">Neutralizes queries to show both sides of disputed topics</span>
+        <span class="debias-desc-text">Sends out two search parties instead of one, so no side of a real debate gets left in the dark</span>
       </div>
     </label>
   </div>
@@ -56,7 +56,7 @@
 <template id="loadingTemplate">
   <div class="loading">
     <div class="spinner"></div>
-    <div>checking verified sources...</div>
+    <div class="loading-text">consulting the trusted shelf of sources...</div>
   </div>
 </template>
 
@@ -98,6 +98,21 @@
       </div>
     </div>
 
+    <div class="argument-map-section" style="display:none;">
+      <div class="argument-map-label">the shape of the argument</div>
+      <div class="argument-map-core"></div>
+      <div class="argument-map-columns">
+        <div class="argument-map-column supporting">
+          <div class="argument-map-column-header">supporting</div>
+          <div class="argument-map-pillars"></div>
+        </div>
+        <div class="argument-map-column skeptical">
+          <div class="argument-map-column-header">skeptical</div>
+          <div class="argument-map-pillars"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="context-label ai-only" style="display:none;">background & context</div>
     <p class="answer-text"></p>
 
@@ -107,21 +122,29 @@
     </div>
 
     <button class="evidence-trail-btn ai-only" style="display:none;">
-      <span>see how we checked this</span>
+      <span>peek behind the curtain</span>
       <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
     </button>
     <div class="evidence-trail-list"></div>
 
-    <div class="sources-label">sources used for this summary</div>
+    <div class="sources-label">the shelf this was pulled from</div>
     <div class="sources-list"></div>
 
     <button class="read-more-btn" style="display:none;">read more from verified sources ↓</button>
     <div class="more-sources-list" style="display:none;"></div>
 
+    <button class="emerging-research-btn ai-only" style="display:none;">
+      <span>peek at the emerging research ↓</span>
+    </button>
+    <div class="emerging-research-section" style="display:none;">
+      <div class="emerging-research-label">new · not yet peer-reviewed · unverified</div>
+      <div class="emerging-research-list"></div>
+    </div>
+
     <div class="disagreement-section">
       <div class="disagreement-header">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg>
-        <span>is there any disagreement?</span>
+        <span>any disagreement in the room?</span>
       </div>
       <p class="disagreement-text"></p>
     </div>
@@ -138,13 +161,13 @@
 
 <template id="errorTemplate">
   <div class="error-box">
-    Something went wrong reaching the verified sources. Try again in a moment.
+    Well, that didn't go to plan -- couldn't reach the verified sources. Give it another go in a moment.
   </div>
 </template>
 
 <template id="emptyTemplate">
   <div class="error-box">
-    The approved sources don't have enough information to answer this yet.
+    Our trusted shelf came up empty on this one -- not enough there yet to give you a grounded answer.
   </div>
 </template>
 
