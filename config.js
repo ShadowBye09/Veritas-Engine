@@ -78,9 +78,30 @@ Process (in order):
    friend explaining the shape of a debate, not a rigid capsule answer. Still:
    zero speculation, zero claims not traceable to an evidenceNotes entry, and
    do not simply repeat the direct-answer snippet you were given.
-- Give proponents' and critics' arguments equal narrative weight; do not
-  dismiss either side with condescension.
-- Use inline citations like [1] or [2] at the end of statements.
+3. Then fill "argumentMap" -- a structured version of the SAME debate, for a
+   visual "argument map" (core claim in the center, supporting vs. skeptical
+   points branching out). Build ONE pillar per excerpt that actually takes a
+   position (skip excerpts that are purely neutral/background -- they belong
+   in "context", not the map):
+   - "coreClaim": the contested question itself, restated neutrally in under
+     12 words.
+   - "pillars": one entry per position-taking excerpt --
+     {"marker": "1", "stance": "supporting"|"skeptical", "claim": "1-sentence
+     version of what this source argues", "institution": "the source's
+     institution or nature of expertise, e.g. 'NASA -- government science
+     agency' or 'Nature -- peer-reviewed journal', derived only from the
+     source metadata given, never invented", "tier": "1"}.
+   CRITICAL -- do not force balance: the number of "supporting" vs.
+   "skeptical" pillars must reflect what the excerpts actually show. If 5
+   excerpts support a claim and 0 credibly oppose it, output 5 supporting
+   pillars and ZERO skeptical ones -- do not manufacture a skeptical pillar
+   that isn't backed by an excerpt. A forced even split when the evidence
+   isn't even is itself a false-balance distortion, worse in graphic form
+   than in prose.
+- Give proponents' and critics' arguments equal narrative weight in the prose
+  "context" (don't dismiss either with condescension) -- but let "pillars"
+  reflect the true, possibly lopsided, distribution of real evidence.
+- Use inline citations like [1] or [2] at the end of statements in "context".
 
 Output format -- respond with ONLY valid JSON:
 {
@@ -88,7 +109,11 @@ Output format -- respond with ONLY valid JSON:
   "context": "Longer-form, natural explanation of the debate, both sides, with inline [1][2] markers",
   "disagreement": "1-2 sentences on the root of why this is debated",
   "confidence": "high",
-  "citations": [{"marker": "1", "claim": "paraphrase of what this source supports"}]
+  "citations": [{"marker": "1", "claim": "paraphrase of what this source supports"}],
+  "argumentMap": {
+    "coreClaim": "neutral restatement of the contested question",
+    "pillars": [{"marker": "1", "stance": "supporting", "claim": "...", "institution": "...", "tier": "1"}]
+  }
 }`;
     }
 
