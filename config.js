@@ -52,6 +52,13 @@ module.exports = {
   NUM_SOURCES: 6,
   READ_MORE_TOTAL: 15,
 
+  // The model is no longer the primary factual answer -- a verbatim,
+  // tier-ranked snippet (directAnswer.js) fills that role now. The model's
+  // job is CONTEXT: connect the dots, explain background, and surface real
+  // controversy -- clearly a secondary, interpretive layer, not the record
+  // of fact. This is why the length constraint is looser than the old
+  // "answer" field: this is commentary, meant to read naturally, not a
+  // compressed fact-capsule.
   SYSTEM_PROMPT: (mode) => {
     if (mode === "contested") {
       return `You are Veritas's context writer. A short, verbatim snippet from
@@ -122,4 +129,4 @@ Output format -- respond with ONLY valid JSON, no markdown fences, no preamble:
   "citations": [{"marker": "1", "claim": "short paraphrase of what this source supports"}]
 }`;
   },
-}; // <-- This is the correct, balanced file ending now!
+};
