@@ -42,7 +42,7 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
   const userMessage = `User question: ${question}\n\n${directAnswerBlock}Excerpts:\n${excerptsBlock}`;
 
   const response = await client.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     max_tokens: 1400,
     response_format: {
       type: "json_schema",
