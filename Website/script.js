@@ -4,6 +4,7 @@
 
 const API_URL = "https://veritas-engine-8jlh.onrender.com/ask";
 const MORE_SOURCES_URL = "https://veritas-engine-8jlh.onrender.com/more-sources";
+const EMERGING_RESEARCH_URL = "https://veritas-engine-8jlh.onrender.com/emerging-research";
 
 const questionInput = document.getElementById("questionInput");
 const searchBtn = document.getElementById("searchBtn");
@@ -119,10 +120,22 @@ function clearResult() {
   resultArea.innerHTML = "";
 }
 
+// Loading-state chrome only -- keeps things light while the request runs.
+// Deliberately never used for the answer, evidence, or disagreement text.
+const LOADING_LINES = [
+  "consulting the trusted shelf of sources...",
+  "don't panic -- checking the bedrock first...",
+  "reading past the truncated bits...",
+  "sorting the sediment from the bedrock...",
+];
+
 function showLoading() {
   clearResult();
   const tpl = document.getElementById("loadingTemplate");
-  resultArea.appendChild(tpl.content.cloneNode(true));
+  const node = tpl.content.cloneNode(true);
+  const line = LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)];
+  node.querySelector(".loading-text").textContent = line;
+  resultArea.appendChild(node);
 }
 
 function showError() {
@@ -249,6 +262,59 @@ function showResult(question, data) {
     strategyBanner.style.display = "none";
   }
 
+  // --- Argument map (contested mode only) ---
+  // Only rendered when the backend actually produced pillars -- for
+  // genuinely settled questions there's no argumentMap at all, so this
+  // section stays hidden and the plain direct-answer + context layout is
+  // what the person sees. Pillar column widths are proportional to the
+  // real pillar counts on each side; never forced to 50/50.
+  const argMapSection = node.querySelector(".argument-map-section");
+  const pillars = (data.argumentMap && data.argumentMap.pillars) || [];
+  if (!isHuman && pillars.length > 0) {
+    argMapSection.style.display = "";
+    node.querySelector(".argument-map-core").textContent = data.argumentMap.coreClaim || question;
+
+    const supportingCol = node.querySelector(".argument-map-column.supporting");
+    const skepticalCol = node.querySelector(".argument-map-column.skeptical");
+    const supportingList = supportingCol.querySelector(".argument-map-pillars");
+    const skepticalList = skepticalCol.querySelector(".argument-map-pillars");
+
+    const supporting = pillars.filter((p) => p.stance === "supporting");
+    const skeptical = pillars.filter((p) => p.stance === "skeptical");
+
+    // Flex-grow proportional to pillar count on each side, with a floor so
+    // a lone dissenting pillar still gets a visible sliver rather than
+    // vanishing -- but a 5-vs-0 split still reads as overwhelmingly lopsided,
+    // which is the point: the map should look like the evidence, not like a
+    // debate stage.
+    const total = supporting.length + skeptical.length || 1;
+    supportingCol.style.flexGrow = Math.max(supporting.length / total, 0.12);
+    skepticalCol.style.flexGrow = Math.max(skeptical.length / total, 0.12);
+    skepticalCol.style.display = skeptical.length > 0 ? "" : "none";
+    supportingCol.style.flexGrow = skeptical.length > 0 ? supportingCol.style.flexGrow : 1;
+
+    const buildPillar = (p) => {
+      const el = document.createElement("button");
+      const info = tierInfo(Number(p.tier));
+      el.type = "button";
+      el.className = `argument-pillar ${info.key}`;
+      el.innerHTML = `<span class="argument-pillar-claim">${p.claim || ""}</span>`;
+      el.addEventListener("click", () => {
+        el.classList.toggle("expanded");
+      });
+      const detail = document.createElement("span");
+      detail.className = "argument-pillar-institution";
+      detail.textContent = p.institution || "";
+      el.appendChild(detail);
+      return el;
+    };
+
+    supporting.forEach((p) => supportingList.appendChild(buildPillar(p)));
+    skeptical.forEach((p) => skepticalList.appendChild(buildPillar(p)));
+  } else {
+    argMapSection.style.display = "none";
+  }
+
   // AI tier: the model writes "context" now, not the primary answer.
   // Human tier keeps its own hand-written "answer" field, untouched.
   const contextLabel = node.querySelector(".context-label");
@@ -259,6 +325,9 @@ function showResult(question, data) {
     // Only caption this as "background" when there's a direct-answer snippet
     // above it -- otherwise this text IS the answer, not background to one.
     contextLabel.style.display = data.directAnswer ? "" : "none";
+    // When an argument map is already shown above, the prose below it is
+    // the fuller writeup, not a first introduction to the topic.
+    contextLabel.textContent = pillars.length > 0 ? "the fuller writeup" : "background & context";
   }
 
   node.querySelector(".disagreement-text").textContent =
@@ -377,6 +446,59 @@ function showResult(question, data) {
     });
   }
 
+  // --- Emerging Research (lazy-loaded Tier 2 preprints, real citation signals) ---
+  const emergingBtn = node.querySelector(".emerging-research-btn");
+  const emergingSection = node.querySelector(".emerging-research-section");
+  const emergingList = node.querySelector(".emerging-research-list");
+  if (!isHuman) {
+    emergingBtn.style.display = "";
+    emergingBtn.addEventListener("click", async () => {
+      const opening = emergingSection.style.display === "none";
+      if (!opening) {
+        emergingSection.style.display = "none";
+        emergingBtn.querySelector("span").textContent = "peek at the emerging research ↓";
+        return;
+      }
+      if (emergingList.childElementCount > 0) {
+        emergingSection.style.display = "";
+        emergingBtn.querySelector("span").textContent = "hide emerging research ↑";
+        return;
+      }
+
+      emergingBtn.disabled = true;
+      emergingBtn.querySelector("span").textContent = "scouting the preprint servers...";
+
+      try {
+        const res = await fetch(EMERGING_RESEARCH_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const payload = await res.json();
+        const results = payload.results || [];
+
+        if (results.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "emerging-research-empty";
+          empty.textContent = "Nothing new and citable turned up for this one -- the trail's gone cold, for now.";
+          emergingList.appendChild(empty);
+        } else {
+          results.forEach((r) => emergingList.appendChild(buildEmergingResearchItem(r)));
+        }
+
+        emergingSection.style.display = "";
+        emergingBtn.querySelector("span").textContent = "hide emerging research ↑";
+      } catch (err) {
+        console.error(err);
+        emergingBtn.querySelector("span").textContent = "couldn't reach the preprint servers -- try again";
+      } finally {
+        emergingBtn.disabled = false;
+      }
+    });
+  } else {
+    emergingBtn.style.display = "none";
+  }
+
   const listenBtn = node.querySelector(".listen-btn");
   const listenLabel = node.querySelector(".listen-label");
   listenBtn.addEventListener("click", () => {
@@ -398,6 +520,45 @@ function showResult(question, data) {
   });
 
   resultArea.appendChild(node);
+}
+
+function buildEmergingResearchItem(r) {
+  const a = document.createElement("a");
+  a.className = "emerging-research-item";
+  a.href = r.link || "#";
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+
+  const topRow = document.createElement("div");
+  topRow.className = "emerging-research-top-row";
+
+  const title = document.createElement("span");
+  title.className = "emerging-research-title";
+  title.textContent = r.title || r.link;
+  topRow.appendChild(title);
+  a.appendChild(topRow);
+
+  const meta = document.createElement("span");
+  meta.className = "emerging-research-meta";
+  const bits = [];
+  if (r.venue) bits.push(r.venue);
+  if (r.year) bits.push(String(r.year));
+  bits.push(
+    r.citationVelocity !== null && r.citationVelocity !== undefined
+      ? `${r.citationVelocity} citations/yr`
+      : "too new to rank yet"
+  );
+  meta.textContent = bits.join(" · ");
+  a.appendChild(meta);
+
+  if (r.summary) {
+    const summary = document.createElement("span");
+    summary.className = "emerging-research-summary";
+    summary.textContent = r.summary;
+    a.appendChild(summary);
+  }
+
+  return a;
 }
 
 function buildSourceLink(s) {
