@@ -1,6 +1,7 @@
 // cache.js
 const Database = require("better-sqlite3");
 const path = require("path");
+const { normalizeQuestion } = require("./normalize");
 
 // Open or create a local database file named 'veritas_cache.db'
 const dbPath = path.join(__dirname, "veritas_cache.db");
@@ -43,7 +44,7 @@ db.exec(`
  * @returns {object|null} The cached JSON result or null if expired/not found
  */
 function getCachedResult(question, mode, ttlHours = 48) {
-  const normalizedQuestion = question.toLowerCase().trim();
+  const normalizedQuestion = normalizeQuestion(question);
   
   const query = db.prepare(`
     SELECT result_json 
@@ -68,7 +69,7 @@ function getCachedResult(question, mode, ttlHours = 48) {
  * @param {object} result - The final parsed result object
  */
 function setCachedResult(question, mode, result) {
-  const normalizedQuestion = question.toLowerCase().trim();
+  const normalizedQuestion = normalizeQuestion(question);
   const jsonString = JSON.stringify(result);
 
   const insert = db.prepare(`
@@ -88,7 +89,7 @@ function setCachedResult(question, mode, result) {
  * @returns {{tier: string, ttlHours: number}|null}
  */
 function getVolatility(question) {
-  const normalizedQuestion = question.toLowerCase().trim();
+  const normalizedQuestion = normalizeQuestion(question);
   const row = db
     .prepare(`SELECT tier, ttl_hours FROM topic_volatility WHERE question = ?`)
     .get(normalizedQuestion);
@@ -105,7 +106,7 @@ function getVolatility(question) {
  * @param {number} ttlHours
  */
 function setVolatility(question, tier, ttlHours) {
-  const normalizedQuestion = question.toLowerCase().trim();
+  const normalizedQuestion = normalizeQuestion(question);
   db.prepare(`
     INSERT INTO topic_volatility (question, tier, ttl_hours)
     VALUES (?, ?, ?)
@@ -124,7 +125,7 @@ function setVolatility(question, tier, ttlHours) {
  * @returns {boolean} true if a row was deleted
  */
 function invalidateCachedResult(question, mode) {
-  const normalizedQuestion = question.toLowerCase().trim();
+  const normalizedQuestion = normalizeQuestion(question);
   const result = db
     .prepare(`DELETE FROM query_cache WHERE question = ? AND mode = ?`)
     .run(normalizedQuestion, mode);
