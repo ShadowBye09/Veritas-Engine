@@ -1,40 +1,41 @@
 // cache.js
-const Database = require("better-sqlite3");
 const path = require("path");
 const { normalizeQuestion } = require("./normalize");
 
-// Open or create a local database file named 'veritas_cache.db'
-const dbPath = path.join(__dirname, "veritas_cache.db");
-const db = new Database(dbPath);
+// The local SQLite cache is suitable for a long-running server, but Vercel
+// functions can be read-only and ephemeral. Fail gracefully in that case so
+// the app can still answer without persistent caching.
+let db = null;
+try {
+  const Database = require("better-sqlite3");
+  const dbPath = path.join(__dirname, "veritas_cache.db");
+  db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
 
-// Enable performance optimizations for SQLite
-db.pragma("journal_mode = WAL");
-db.pragma("synchronous = NORMAL");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS query_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(question, mode)
+    )
+  `);
 
-// Create the cache table if it doesn't already exist
-db.exec(`
-  CREATE TABLE IF NOT EXISTS query_cache (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    question TEXT NOT NULL,
-    mode TEXT NOT NULL,
-    result_json TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(question, mode)
-  )
-`);
-
-// Remembers how "volatile" a given question's topic is, so we don't have to
-// re-classify it every time it's asked. This is what lets the shared cache
-// use a longer TTL for stable facts and a short one for fast-changing topics
-// instead of one flat TTL for everything.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS topic_volatility (
-    question TEXT PRIMARY KEY,
-    tier TEXT NOT NULL,
-    ttl_hours INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS topic_volatility (
+      question TEXT PRIMARY KEY,
+      tier TEXT NOT NULL,
+      ttl_hours INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+} catch (err) {
+  console.warn(`[cache] SQLite unavailable; caching disabled: ${err.message}`);
+  db = null;
+}
 
 /**
  * Retrieve cached results if they are newer than the specified TTL (Time-To-Live).
@@ -44,6 +45,7 @@ db.exec(`
  * @returns {object|null} The cached JSON result or null if expired/not found
  */
 function getCachedResult(question, mode, ttlHours = 48) {
+  if (!db) return null;
   const normalizedQuestion = normalizeQuestion(question);
   
   const query = db.prepare(`
@@ -69,6 +71,7 @@ function getCachedResult(question, mode, ttlHours = 48) {
  * @param {object} result - The final parsed result object
  */
 function setCachedResult(question, mode, result) {
+  if (!db) return;
   const normalizedQuestion = normalizeQuestion(question);
   const jsonString = JSON.stringify(result);
 
@@ -89,6 +92,7 @@ function setCachedResult(question, mode, result) {
  * @returns {{tier: string, ttlHours: number}|null}
  */
 function getVolatility(question) {
+  if (!db) return null;
   const normalizedQuestion = normalizeQuestion(question);
   const row = db
     .prepare(`SELECT tier, ttl_hours FROM topic_volatility WHERE question = ?`)
@@ -106,6 +110,7 @@ function getVolatility(question) {
  * @param {number} ttlHours
  */
 function setVolatility(question, tier, ttlHours) {
+  if (!db) return;
   const normalizedQuestion = normalizeQuestion(question);
   db.prepare(`
     INSERT INTO topic_volatility (question, tier, ttl_hours)
@@ -125,6 +130,7 @@ function setVolatility(question, tier, ttlHours) {
  * @returns {boolean} true if a row was deleted
  */
 function invalidateCachedResult(question, mode) {
+  if (!db) return false;
   const normalizedQuestion = normalizeQuestion(question);
   const result = db
     .prepare(`DELETE FROM query_cache WHERE question = ? AND mode = ?`)

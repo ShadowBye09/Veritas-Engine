@@ -8,7 +8,11 @@
 const OpenAI = require("openai");
 const { SYSTEM_PROMPT } = require("./config");
 
-const client = new OpenAI();
+let client;
+function getOpenAI() {
+  if (!client) client = new OpenAI();
+  return client;
+}
 
 /**
  * @param {string} question
@@ -113,7 +117,7 @@ async function summarize(question, sources, mode = "adult", directAnswer = null)
 
   const schemaRequired = isContested ? [...baseRequired, "argumentMap"] : baseRequired;
 
-  const response = await client.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 1600,
     response_format: {

@@ -6,7 +6,11 @@
 const OpenAI = require("openai");
 const { getVolatility, setVolatility } = require("./cache");
 
-const openai = new OpenAI();
+let openai;
+function getOpenAI() {
+  if (!openai) openai = new OpenAI();
+  return openai;
+}
 
 // Hours to cache a result once we know its volatility tier.
 const TTL_HOURS_BY_TIER = {
@@ -48,7 +52,7 @@ async function classifyVolatility(question) {
   let tier = DEFAULT_TIER;
   try {
     // Cheap model -- this is a one-word classification task, not synthesis.
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
