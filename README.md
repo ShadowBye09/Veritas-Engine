@@ -12,15 +12,7 @@ extraction -> Claude summary constrained to only the retrieved text.
 
 2. `npm install`
 
-3. Run the complete app:
-   ```
-   npm start
-   ```
-
-   Then open http://localhost:3000 in your browser. This serves both the
-   frontend and API from the same Express server.
-
-   The CLI is available for debugging individual questions:
+3. Run it:
    ```
    node ask.js "is climate change caused by humans" adult
    node ask.js "do vaccines cause autism" kid

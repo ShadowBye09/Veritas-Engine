@@ -8,11 +8,7 @@ const { Readability } = require("@mozilla/readability");
 const OpenAI = require("openai");
 const { NUM_SOURCES, READ_MORE_TOTAL, WHITELIST_DOMAINS } = require("./config");
 
-let openai;
-function getOpenAI() {
-  if (!openai) openai = new OpenAI();
-  return openai;
-}
+const openai = new OpenAI();
 
 const DOMAIN_STRINGS = WHITELIST_DOMAINS.map((d) => d.domain);
 
@@ -122,7 +118,7 @@ Respond ONLY with a valid JSON object of this exact shape:
   try {
     // Cheap/fast model is fine here -- this is a small rewriting task, not
     // the grounded-synthesis step, so it doesn't need the stronger model.
-    const response = await getOpenAI().chat.completions.create({
+    const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [

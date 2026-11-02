@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
 const { retrieveSources, searchWhitelist } = require("./retrieve");
 const { summarize } = require("./summarize");
 const { selectDirectAnswer } = require("./directAnswer");
@@ -153,13 +152,7 @@ app.post("/admin/invalidate-cache", (req, res) => {
   res.json({ question, clearedEntries: cleared });
 });
 
-app.use(express.static(path.join(__dirname, "Website")));
-
 const PORT = process.env.PORT || 3000;
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Veritas API listening on port ${PORT}`);
-  });
-}
-
-module.exports = app;
+app.listen(PORT, () => {
+  console.log(`Veritas API listening on port ${PORT}`);
+});

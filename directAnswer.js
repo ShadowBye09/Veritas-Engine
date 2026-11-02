@@ -7,11 +7,7 @@
 
 const OpenAI = require("openai");
 
-let openai;
-function getOpenAI() {
-  if (!openai) openai = new OpenAI();
-  return openai;
-}
+const openai = new OpenAI();
 
 // Small nudge so that when two passages are nearly equally relevant, the
 // higher-trust-tier one wins -- without letting tier override genuine
@@ -85,7 +81,7 @@ async function selectDirectAnswer(question, aiSources) {
 
   let embeddings;
   try {
-    const response = await getOpenAI().embeddings.create({
+    const response = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: [question, ...candidates.map((c) => c.text)],
     });

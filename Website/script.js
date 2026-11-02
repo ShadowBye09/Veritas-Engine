@@ -2,9 +2,9 @@
 // Talks to your Render-hosted backend's POST /ask endpoint and renders
 // the result using the templates in index.html.
 
-const API_URL = "/ask";
-const MORE_SOURCES_URL = "/more-sources";
-const EMERGING_RESEARCH_URL = "/emerging-research";
+const API_URL = "https://veritas-engine-8jlh.onrender.com/ask";
+const MORE_SOURCES_URL = "https://veritas-engine-8jlh.onrender.com/more-sources";
+const EMERGING_RESEARCH_URL = "https://veritas-engine-8jlh.onrender.com/emerging-research";
 
 const questionInput = document.getElementById("questionInput");
 const searchBtn = document.getElementById("searchBtn");
